@@ -3,739 +3,913 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
+const storageKey = "playcraft_v6_ultra";
 
-function createChat(name = "New chat") {
-  return {
-    id: uid(),
-    title: name,
-    mode: "chat",
-    messages: [],
-    createdAt: Date.now(),
-  };
+function loadState() {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(storageKey);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
 }
 
-function createProject(name = "My project") {
-  const firstChat = createChat("New chat");
-  return {
-    id: uid(),
-    name,
-    chats: [firstChat],
-    createdAt: Date.now(),
-  };
+function saveState(state) {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(state));
+  } catch {}
 }
 
-const DEFAULT_PROJECTS = [createProject("General")];
-
-function inferTitle(text) {
-  const cleaned = (text || "").trim().replace(/\s+/g, " ");
-  if (!cleaned) return "New chat";
-  return cleaned.slice(0, 32) + (cleaned.length > 32 ? "…" : "");
+function makeChat(title = "New chat") {
+  return { id: uid(), title, messages: [] };
 }
 
-function prettyFileSize(bytes) {
-  if (!bytes) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+function makeProject(name = "New project") {
+  return { id: uid(), name, icon: "📁", color: ["#7c6cff", "#ff9a62"][Math.floor(Math.random() * 2)], chatIds: [] };
 }
 
-function readFile(file) {
-  return new Promise((resolve) => {
-    const isImage = file.type.startsWith("image/");
-    const isTextish = /^(text\/|application\/(json|javascript|xml))/.test(file.type) || /\.(txt|md|js|jsx|ts|tsx|css|html|json|ino|cpp|c|h|py|java|rb|go|rs|sql)$/i.test(file.name);
-
-    if (isImage) {
-      const reader = new FileReader();
-      reader.onload = () => resolve({
-        id: uid(),
-        name: file.name,
-        type: file.type || "image/png",
-        size: file.size,
-        dataUrl: String(reader.result),
-      });
-      reader.readAsDataURL(file);
-      return;
-    }
-
-    if (isTextish) {
-      const reader = new FileReader();
-      reader.onload = () => resolve({
-        id: uid(),
-        name: file.name,
-        type: file.type || "text/plain",
-        size: file.size,
-        text: String(reader.result).slice(0, 50000),
-      });
-      reader.readAsText(file);
-      return;
-    }
-
-    resolve({
+async function fileToData(file) {
+  const isImage = file.type.startsWith("image/");
+  if (isImage) {
+    const bitmap = await createImageBitmap(file);
+    const max = 1200;
+    const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+    return {
       id: uid(),
       name: file.name,
-      type: file.type || "application/octet-stream",
+      kind: "image",
+      mime: "image/jpeg",
+      previewUrl: dataUrl,
+      base64: dataUrl.split(",")[1],
       size: file.size,
-      text: `Binary file attached: ${file.name}`,
-    });
-  });
+    };
+  }
+
+  const text = await file.text();
+  const trimmed = text.slice(0, 70000);
+  return {
+    id: uid(),
+    name: file.name,
+    kind: "text",
+    mime: file.type || "text/plain",
+    text: trimmed,
+    truncated: text.length > trimmed.length,
+    size: file.size,
+  };
 }
 
-function TypingDots() {
-  return (
-    <div className="typingDots" aria-label="Thinking">
-      <span />
-      <span />
-      <span />
-    </div>
-  );
+function renderInline(text) {
+  const nodes = [];
+  const chunks = text.split(/(`[^`]+`)/g);
+  let key = 0;
+  for (const chunk of chunks) {
+    if (!chunk) continue;
+    if (chunk.startsWith("`") && chunk.endsWith("`")) {
+      nodes.push(
+        <code key={key++} style={{ background: "rgba(53,69,118,0.08)", padding: "2px 7px", borderRadius: 8, fontSize: "0.92em" }}>
+          {chunk.slice(1, -1)}
+        </code>
+      );
+      continue;
+    }
+    const boldParts = chunk.split(/(\*\*[^*]+\*\*)/g);
+    for (const part of boldParts) {
+      if (!part) continue;
+      if (part.startsWith("**") && part.endsWith("**")) {
+        nodes.push(<strong key={key++}>{part.slice(2, -2)}</strong>);
+      } else {
+        nodes.push(<span key={key++}>{part}</span>);
+      }
+    }
+  }
+  return nodes;
 }
 
-function AttachmentPill({ file, onRemove }) {
-  const isImage = file.type?.startsWith("image/") && file.dataUrl;
-  return (
-    <div className="attachmentPill">
-      {isImage ? (
-        <img src={file.dataUrl} alt={file.name} className="attachmentThumb" />
-      ) : (
-        <div className="attachmentIcon">📄</div>
-      )}
-      <div className="attachmentMeta">
-        <div className="attachmentName">{file.name}</div>
-        <div className="attachmentSize">{prettyFileSize(file.size)}</div>
-      </div>
-      {onRemove ? (
-        <button className="tinyGhost" onClick={onRemove} type="button">✕</button>
-      ) : null}
-    </div>
-  );
+function renderBlocks(text) {
+  const out = [];
+  const lines = text.split("\n");
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i].trimEnd();
+    if (!line.trim()) {
+      i += 1;
+      continue;
+    }
+
+    if (/^#{1,3}\s/.test(line)) {
+      const level = line.match(/^#+/)[0].length;
+      const content = line.replace(/^#{1,3}\s/, "");
+      const size = level === 1 ? 24 : level === 2 ? 20 : 17;
+      out.push(
+        <div key={`h-${i}`} style={{ fontSize: size, fontWeight: 850, margin: "10px 0 10px", lineHeight: 1.25 }}>
+          {renderInline(content)}
+        </div>
+      );
+      i += 1;
+      continue;
+    }
+
+    if (/^[-*]\s/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^[-*]\s/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^[-*]\s/, ""));
+        i += 1;
+      }
+      out.push(
+        <ul key={`ul-${i}`} style={{ margin: "4px 0 14px", paddingInlineStart: 22 }}>
+          {items.map((item, idx) => (
+            <li key={idx} style={{ marginBottom: 8, lineHeight: 1.72 }}>{renderInline(item)}</li>
+          ))}
+        </ul>
+      );
+      continue;
+    }
+
+    if (/^\d+\.\s/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^\d+\.\s/, ""));
+        i += 1;
+      }
+      out.push(
+        <ol key={`ol-${i}`} style={{ margin: "4px 0 14px", paddingInlineStart: 22 }}>
+          {items.map((item, idx) => (
+            <li key={idx} style={{ marginBottom: 8, lineHeight: 1.72 }}>{renderInline(item)}</li>
+          ))}
+        </ol>
+      );
+      continue;
+    }
+
+    const paragraph = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !/^#{1,3}\s/.test(lines[i].trim()) &&
+      !/^[-*]\s/.test(lines[i].trim()) &&
+      !/^\d+\.\s/.test(lines[i].trim())
+    ) {
+      paragraph.push(lines[i]);
+      i += 1;
+    }
+    out.push(
+      <p key={`p-${i}`} style={{ margin: "0 0 14px", lineHeight: 1.78, fontSize: 15.5 }}>
+        {renderInline(paragraph.join("\n"))}
+      </p>
+    );
+  }
+
+  return out;
 }
 
-function MessageBubble({ msg }) {
+function RichMessage({ text }) {
+  const parts = text.split(/```([\w.+-]*)\n([\s\S]*?)```/g);
+  const nodes = [];
+  for (let i = 0; i < parts.length; i += 3) {
+    const plain = parts[i];
+    if (plain) nodes.push(<div key={`plain-${i}`}>{renderBlocks(plain)}</div>);
+    const lang = parts[i + 1];
+    const code = parts[i + 2];
+    if (code !== undefined) {
+      nodes.push(
+        <div key={`code-${i}`} style={{ margin: "14px 0 18px", borderRadius: 22, overflow: "hidden", background: "#12203d", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 14px 28px rgba(15,26,52,0.18)" }}>
+          <div style={{ padding: "11px 15px", fontSize: 12, fontWeight: 800, color: "rgba(255,255,255,0.78)", letterSpacing: ".06em", textTransform: "uppercase", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+            {lang || "code"}
+          </div>
+          <pre style={{ margin: 0, padding: 16, overflowX: "auto", color: "#f7fbff", fontSize: 13.5, lineHeight: 1.65, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
+            <code>{code.trim()}</code>
+          </pre>
+        </div>
+      );
+    }
+  }
+  return <div>{nodes}</div>;
+}
+
+function ChatBubble({ msg, isTyping, onDownloadFile }) {
   const isUser = msg.role === "user";
   return (
-    <div className={`messageRow ${isUser ? "user" : "assistant"}`}>
-      <div className="avatar">{isUser ? "U" : "P"}</div>
-      <div className="messageBody">
-        <div className="messageHeader">{isUser ? "You" : "Playcraft"}</div>
+    <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", marginBottom: 18 }}>
+      <div
+        style={{
+          maxWidth: "min(920px, 90%)",
+          borderRadius: 28,
+          padding: 18,
+          background: isUser ? "linear-gradient(135deg,#7b6dff,#a06bff)" : "rgba(255,255,255,0.86)",
+          color: isUser ? "#fff" : "#22304a",
+          border: isUser ? "none" : "1px solid rgba(93,113,158,0.14)",
+          boxShadow: isUser ? "0 18px 34px rgba(123,109,255,0.2)" : "0 14px 30px rgba(34,48,74,0.08)",
+          backdropFilter: "blur(12px)",
+        }}
+      >
+        {msg.files?.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: msg.text ? 12 : 0 }}>
+            {msg.files.map((f) =>
+              f.kind === "image" ? (
+                <img key={f.id} src={f.previewUrl} alt={f.name} style={{ width: 150, height: 110, objectFit: "cover", borderRadius: 18, border: "1px solid rgba(0,0,0,0.08)" }} />
+              ) : (
+                <div key={f.id} style={{ padding: "10px 12px", borderRadius: 14, background: isUser ? "rgba(255,255,255,0.14)" : "rgba(95,110,160,0.08)", fontSize: 13.5 }}>
+                  📄 {f.name}
+                </div>
+              )
+            )}
+          </div>
+        )}
 
-        {msg.files?.length ? (
-          <div className="messageFiles">
-            {msg.files.map((file) => (
-              <AttachmentPill key={file.id} file={file} />
+        {!!msg.text && (
+          <div>
+            <RichMessage text={msg.text} />
+            {isTyping && <span style={{ display: "inline-block", width: 9, height: 18, borderRadius: 999, background: "currentColor", opacity: 0.45, animation: "blink 1s steps(1) infinite" }} />}
+          </div>
+        )}
+
+        {!!msg.generatedImageUrl && (
+          <div style={{ marginTop: 14 }}>
+            <img src={msg.generatedImageUrl} alt="Generated" style={{ width: "100%", maxWidth: 560, borderRadius: 22, border: "1px solid rgba(0,0,0,0.08)" }} />
+          </div>
+        )}
+
+        {!!msg.filesOut?.length && (
+          <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
+            {msg.filesOut.map((f) => (
+              <button
+                key={f.name}
+                onClick={() => onDownloadFile(f)}
+                style={{
+                  textAlign: "left",
+                  padding: 14,
+                  borderRadius: 18,
+                  border: "1px solid rgba(98,117,170,0.16)",
+                  background: "linear-gradient(180deg,#ffffff,#f7f8ff)",
+                  cursor: "pointer",
+                }}
+              >
+                <div style={{ fontWeight: 800, fontSize: 14 }}>📦 {f.name}</div>
+                <div style={{ fontSize: 12, opacity: 0.68, marginTop: 4 }}>Tap to download</div>
+              </button>
             ))}
           </div>
-        ) : null}
-
-        <div className={`bubble ${isUser ? "userBubble" : "assistantBubble"}`}>
-          {msg.pending ? <TypingDots /> : <div className="bubbleText">{msg.content}</div>}
-        </div>
-
-        {msg.sources?.length ? (
-          <div className="sourcesWrap">
-            <div className="sourcesTitle">Sources</div>
-            <div className="sourcesList">
-              {msg.sources.map((source, index) => (
-                <a
-                  key={`${source.url}-${index}`}
-                  className="sourceItem"
-                  href={source.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <span className="sourceIndex">{index + 1}</span>
-                  <span className="sourceText">{source.title || source.url}</span>
-                </a>
-              ))}
-            </div>
-          </div>
-        ) : null}
+        )}
       </div>
     </div>
+  );
+}
+
+function SidebarAction({ icon, title, subtitle, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: "100%",
+        textAlign: "left",
+        border: "1px solid rgba(93,113,158,0.12)",
+        background: "rgba(255,255,255,0.74)",
+        borderRadius: 18,
+        padding: 14,
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+      }}
+    >
+      <div style={{ width: 40, height: 40, display: "grid", placeItems: "center", borderRadius: 14, background: "linear-gradient(135deg,#fff1bf,#ffd3ae)" }}>{icon}</div>
+      <div>
+        <div style={{ fontWeight: 800, fontSize: 14 }}>{title}</div>
+        <div style={{ fontSize: 12, opacity: 0.62 }}>{subtitle}</div>
+      </div>
+    </button>
   );
 }
 
 export default function Page() {
-  const [projects, setProjects] = useState(DEFAULT_PROJECTS);
-  const [activeProjectId, setActiveProjectId] = useState(DEFAULT_PROJECTS[0].id);
-  const [activeChatId, setActiveChatId] = useState(DEFAULT_PROJECTS[0].chats[0].id);
-  const [text, setText] = useState("");
+  const initial = useMemo(() => loadState(), []);
+  const [rootChats, setRootChats] = useState(initial?.rootChats?.length ? initial.rootChats : [makeChat()]);
+  const [projects, setProjects] = useState(initial?.projects || []);
+  const [projectChats, setProjectChats] = useState(initial?.projectChats || {});
+  const [activeType, setActiveType] = useState(initial?.activeType || "root");
+  const [activeId, setActiveId] = useState(initial?.activeId || (initial?.rootChats?.[0]?.id ?? null) || null);
+  const [composer, setComposer] = useState("");
   const [attachments, setAttachments] = useState([]);
-  const [sending, setSending] = useState(false);
-  const [showPlusMenu, setShowPlusMenu] = useState(false);
-  const [dragging, setDragging] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [mode, setMode] = useState("chat");
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [typingId, setTypingId] = useState(null);
+  const [dragging, setDragging] = useState(false);
+  const [hoveredRoot, setHoveredRoot] = useState(null);
+  const [hoveredProject, setHoveredProject] = useState(null);
+  const [isListening, setIsListening] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(false);
 
-  const fileInputRef = useRef(null);
-  const messagesRef = useRef(null);
-  const textareaRef = useRef(null);
+  const fileRef = useRef(null);
+  const bottomRef = useRef(null);
   const abortRef = useRef(null);
-  const dragCounterRef = useRef(0);
+  const dragCount = useRef(0);
+  const recognitionRef = useRef(null);
+  const voiceTextRef = useRef("");
+  const shouldAutoSendVoiceRef = useRef(false);
+  const composerRef = useRef("");
+  const sendRef = useRef(() => {});
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("playcraft-projects-v3");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length) {
-          setProjects(parsed);
-          setActiveProjectId(parsed[0].id);
-          setActiveChatId(parsed[0].chats?.[0]?.id || null);
-        }
+    composerRef.current = composer;
+  }, [composer]);
+
+  useEffect(() => {
+    saveState({ rootChats, projects, projectChats, activeType, activeId });
+  }, [rootChats, projects, projectChats, activeType, activeId]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [rootChats, projects, projectChats, activeId, typingId]);
+
+  useEffect(() => {
+    const SR = typeof window !== "undefined" ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
+    setSpeechSupported(!!SR);
+    if (!SR) return;
+    const recognition = new SR();
+    recognition.lang = "he-IL";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.onstart = () => setIsListening(true);
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let i = 0; i < event.results.length; i += 1) transcript += event.results[i][0].transcript;
+      voiceTextRef.current = transcript.trim();
+      setComposer((prev) => {
+        const base = shouldAutoSendVoiceRef.current ? "" : prev.trim();
+        return [base, transcript.trim()].filter(Boolean).join(base ? "\n" : " ").trim();
+      });
+    };
+    recognition.onerror = () => {
+      setIsListening(false);
+      setError("Voice input didn't work this time. Try again.");
+    };
+    recognition.onend = () => {
+      setIsListening(false);
+      if (shouldAutoSendVoiceRef.current && voiceTextRef.current.trim()) {
+        setTimeout(() => sendRef.current?.(), 120);
       }
-    } catch {}
+      voiceTextRef.current = "";
+    };
+    recognitionRef.current = recognition;
+    return () => recognition.stop();
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem("playcraft-projects-v3", JSON.stringify(projects));
-  }, [projects]);
-
-  const activeProject = useMemo(
-    () => projects.find((project) => project.id === activeProjectId) || projects[0],
-    [projects, activeProjectId]
-  );
-
   const activeChat = useMemo(() => {
-    if (!activeProject) return null;
-    return activeProject.chats.find((chat) => chat.id === activeChatId) || activeProject.chats[0] || null;
-  }, [activeProject, activeChatId]);
-
-  useEffect(() => {
-    if (!activeProject && projects.length) setActiveProjectId(projects[0].id);
-  }, [activeProject, projects]);
-
-  useEffect(() => {
-    if (!activeChat && activeProject?.chats?.length) setActiveChatId(activeProject.chats[0].id);
-  }, [activeChat, activeProject]);
-
-  useEffect(() => {
-    messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" });
-  }, [activeChat?.messages?.length]);
+    if (!activeId) return null;
+    if (activeType === "root") return rootChats.find((c) => c.id === activeId) || null;
+    return projectChats[activeId] || null;
+  }, [activeType, activeId, rootChats, projectChats]);
 
   const updateActiveChat = (updater) => {
-    setProjects((prev) =>
-      prev.map((project) => {
-        if (project.id !== activeProjectId) return project;
-        return {
-          ...project,
-          chats: project.chats.map((chat) => {
-            if (chat.id !== activeChatId) return chat;
-            return typeof updater === "function" ? updater(chat) : { ...chat, ...updater };
-          }),
-        };
-      })
-    );
-  };
-
-  const createProjectNow = () => {
-    const name = window.prompt("Project name?")?.trim();
-    if (!name) return;
-    const project = createProject(name);
-    setProjects((prev) => [project, ...prev]);
-    setActiveProjectId(project.id);
-    setActiveChatId(project.chats[0].id);
-  };
-
-  const createChatNow = (projectId = activeProjectId) => {
-    const newChat = createChat("New chat");
-    setProjects((prev) =>
-      prev.map((project) =>
-        project.id === projectId
-          ? { ...project, chats: [newChat, ...project.chats] }
-          : project
-      )
-    );
-    setActiveProjectId(projectId);
-    setActiveChatId(newChat.id);
-  };
-
-  const renameProject = (projectId) => {
-    const project = projects.find((p) => p.id === projectId);
-    const name = window.prompt("New project name?", project?.name || "")?.trim();
-    if (!name) return;
-    setProjects((prev) => prev.map((project) => (project.id === projectId ? { ...project, name } : project)));
-  };
-
-  const renameChat = (chatId) => {
-    const chat = activeProject?.chats.find((c) => c.id === chatId);
-    const title = window.prompt("New chat name?", chat?.title || "")?.trim();
-    if (!title) return;
-    setProjects((prev) =>
-      prev.map((project) =>
-        project.id === activeProjectId
-          ? { ...project, chats: project.chats.map((c) => (c.id === chatId ? { ...c, title } : c)) }
-          : project
-      )
-    );
-  };
-
-  const removeChat = (chatId) => {
-    if (!activeProject) return;
-    if (activeProject.chats.length === 1) return;
-    setProjects((prev) =>
-      prev.map((project) =>
-        project.id === activeProjectId
-          ? { ...project, chats: project.chats.filter((c) => c.id !== chatId) }
-          : project
-      )
-    );
-    const next = activeProject.chats.find((c) => c.id !== chatId);
-    if (next) setActiveChatId(next.id);
-  };
-
-  const attachFiles = async (files) => {
-    const loaded = await Promise.all(Array.from(files).map(readFile));
-    setAttachments((prev) => [...prev, ...loaded]);
-  };
-
-  const onDragEnter = (e) => {
-    e.preventDefault();
-    dragCounterRef.current += 1;
-    setDragging(true);
-  };
-  const onDragLeave = (e) => {
-    e.preventDefault();
-    dragCounterRef.current -= 1;
-    if (dragCounterRef.current <= 0) {
-      dragCounterRef.current = 0;
-      setDragging(false);
+    if (!activeChat) return;
+    if (activeType === "root") {
+      setRootChats((prev) => prev.map((chat) => (chat.id === activeChat.id ? updater(chat) : chat)));
+    } else {
+      setProjectChats((prev) => ({ ...prev, [activeChat.id]: updater(prev[activeChat.id]) }));
     }
   };
-  const onDragOver = (e) => e.preventDefault();
-  const onDrop = async (e) => {
-    e.preventDefault();
-    dragCounterRef.current = 0;
-    setDragging(false);
-    if (e.dataTransfer.files?.length) await attachFiles(e.dataTransfer.files);
+
+  const allMessages = activeChat?.messages || [];
+
+  const ensureRootChat = () => {
+    if (!rootChats.length) {
+      const chat = makeChat();
+      setRootChats([chat]);
+      setActiveType("root");
+      setActiveId(chat.id);
+    }
   };
 
-  const applyTyping = (messageId, fullText, sources = []) => {
-    let index = 0;
+  const addRootChat = () => {
+    const chat = makeChat();
+    setRootChats((prev) => [chat, ...prev]);
+    setActiveType("root");
+    setActiveId(chat.id);
+    setMode("chat");
+  };
+
+  const addProject = () => {
+    const name = window.prompt("Project name?")?.trim();
+    if (!name) return;
+    const project = makeProject(name);
+    setProjects((prev) => [project, ...prev]);
+  };
+
+  const addChatToProject = (projectId) => {
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return;
+    const chat = makeChat(`Chat ${project.chatIds.length + 1}`);
+    setProjectChats((prev) => ({ ...prev, [chat.id]: chat }));
+    setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, chatIds: [chat.id, ...p.chatIds] } : p)));
+    setActiveType("project");
+    setActiveId(chat.id);
+  };
+
+  const deleteProject = (projectId) => {
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return;
+    if (!window.confirm(`Delete project \"${project.name}\"?`)) return;
+    setProjects((prev) => prev.filter((p) => p.id !== projectId));
+    setProjectChats((prev) => {
+      const next = { ...prev };
+      project.chatIds.forEach((chatId) => delete next[chatId]);
+      return next;
+    });
+    ensureRootChat();
+    const fallback = rootChats[0] || null;
+    if (fallback) {
+      setActiveType("root");
+      setActiveId(fallback.id);
+    }
+  };
+
+  const deleteRootChat = (chatId) => {
+    setRootChats((prev) => {
+      const next = prev.filter((chat) => chat.id !== chatId);
+      if (!next.length) {
+        const newChat = makeChat();
+        setActiveType("root");
+        setActiveId(newChat.id);
+        return [newChat];
+      }
+      if (activeType === "root" && activeId === chatId) setActiveId(next[0].id);
+      return next;
+    });
+  };
+
+  const deleteProjectChat = (projectId, chatId) => {
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return;
+    const nextIds = project.chatIds.filter((id) => id !== chatId);
+    setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, chatIds: nextIds } : p)));
+    setProjectChats((prev) => {
+      const next = { ...prev };
+      delete next[chatId];
+      return next;
+    });
+    if (activeType === "project" && activeId === chatId) {
+      if (nextIds[0]) {
+        setActiveType("project");
+        setActiveId(nextIds[0]);
+      } else if (rootChats[0]) {
+        setActiveType("root");
+        setActiveId(rootChats[0].id);
+      }
+    }
+  };
+
+  const addFiles = async (fileList) => {
+    setError("");
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    const converted = [];
+    for (const file of files.slice(0, 5)) {
+      try {
+        converted.push(await fileToData(file));
+      } catch {
+        setError(`Couldn't read ${file.name}`);
+      }
+    }
+    const total = converted.reduce((sum, f) => sum + (f.base64?.length || f.text?.length || 0), 0);
+    if (total > 2_200_000) {
+      setError("The files are too big. Try smaller files or fewer images.");
+      return;
+    }
+    setAttachments((prev) => [...prev, ...converted]);
+  };
+
+  const animateAssistantMessage = (messageId, fullText, extras = {}) => {
+    setTypingId(messageId);
+    let i = 0;
+    const step = Math.max(2, Math.ceil(fullText.length / 220));
     const tick = () => {
-      index += Math.max(1, Math.ceil(fullText.length / 140));
-      const nextSlice = fullText.slice(0, index);
+      i = Math.min(fullText.length, i + step);
       updateActiveChat((chat) => ({
         ...chat,
-        messages: chat.messages.map((msg) =>
-          msg.id === messageId
-            ? { ...msg, content: nextSlice, pending: index < fullText.length, sources: index >= fullText.length ? sources : [] }
-            : msg
-        ),
+        messages: chat.messages.map((m) => (m.id === messageId ? { ...m, text: fullText.slice(0, i), ...extras } : m)),
       }));
-      if (index < fullText.length) {
-        setTimeout(tick, 14);
-      }
+      if (i < fullText.length) setTimeout(tick, 16);
+      else setTypingId(null);
     };
     tick();
   };
 
   const send = async () => {
-    const content = text.trim();
-    if (!content && !attachments.length) return;
-    if (!activeChat || sending) return;
-
+    if (loading || !activeChat) return;
+    const text = composer.trim();
+    if (!text && !attachments.length && mode !== "image") return;
     setError("");
-    setShowPlusMenu(false);
 
-    const userMessage = {
-      id: uid(),
-      role: "user",
-      content,
-      files: attachments,
-      createdAt: Date.now(),
-    };
-    const assistantMessage = {
-      id: uid(),
-      role: "assistant",
-      content: "",
-      pending: true,
-      createdAt: Date.now(),
-      sources: [],
-    };
+    const userMsg = { id: uid(), role: "user", text, files: attachments, mode };
+    const assistantMsg = { id: uid(), role: "assistant", text: "" };
 
-    const nextMessages = [...activeChat.messages, userMessage, assistantMessage];
     updateActiveChat((chat) => ({
       ...chat,
-      title: chat.messages.length ? chat.title : inferTitle(content || attachments[0]?.name || "New chat"),
-      messages: nextMessages,
+      title: chat.messages.length ? chat.title : (text || (mode === "image" ? "Create image" : mode === "study" ? "Study and learn" : "New chat")).slice(0, 30),
+      messages: [...chat.messages, userMsg, assistantMsg],
     }));
 
-    setText("");
+    setComposer("");
     setAttachments([]);
-    if (textareaRef.current) textareaRef.current.style.height = "56px";
+    setLoading(true);
+    setMenuOpen(false);
 
     const controller = new AbortController();
     abortRef.current = controller;
-    setSending(true);
 
     try {
-      const response = await fetch("/api/playcraft", {
+      const resp = await fetch("/api/playcraft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: [...allMessages, userMsg], mode }),
         signal: controller.signal,
-        body: JSON.stringify({
-          mode: activeChat.mode,
-          messages: nextMessages.filter((msg) => !msg.pending),
-        }),
       });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.error || "Request failed");
-      }
-
-      applyTyping(assistantMessage.id, data.text || "", data.sources || []);
-    } catch (err) {
-      const message = err?.name === "AbortError" ? "Stopped." : `⚠️ ${err.message}`;
+      const json = await resp.json();
+      if (!resp.ok) throw new Error(json.error || "Something went wrong");
+      const extras = {};
+      if (json.files?.length) extras.filesOut = json.files;
+      if (json.generatedImageUrl) extras.generatedImageUrl = json.generatedImageUrl;
+      animateAssistantMessage(assistantMsg.id, json.text || "Done.", extras);
+    } catch (e) {
       updateActiveChat((chat) => ({
         ...chat,
-        messages: chat.messages.map((msg) =>
-          msg.id === assistantMessage.id ? { ...msg, content: message, pending: false } : msg
-        ),
+        messages: chat.messages.map((m) => (m.id === assistantMsg.id ? { ...m, text: `⚠️ ${e.message}` } : m)),
       }));
     } finally {
-      setSending(false);
+      setLoading(false);
       abortRef.current = null;
+      if (mode !== "chat") setMode("chat");
     }
   };
 
-  const stop = () => {
-    abortRef.current?.abort();
+  sendRef.current = send;
+
+  const toggleVoice = () => {
+    if (!speechSupported) {
+      setError("Voice input is not supported in this browser.");
+      return;
+    }
+    if (isListening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    shouldAutoSendVoiceRef.current = composerRef.current.trim().length === 0;
+    if (shouldAutoSendVoiceRef.current) setComposer("");
+    voiceTextRef.current = "";
+    setError("");
+    recognitionRef.current?.start();
   };
 
-  const setStudyMode = () => {
-    updateActiveChat((chat) => ({ ...chat, mode: chat.mode === "study" ? "chat" : "study" }));
-    setShowPlusMenu(false);
+  const downloadFile = (file) => {
+    const blob = new Blob([file.content], { type: file.mime || "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = file.name;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const onDragEnter = (e) => {
+    e.preventDefault();
+    dragCount.current += 1;
+    setDragging(true);
+  };
+  const onDragLeave = (e) => {
+    e.preventDefault();
+    dragCount.current -= 1;
+    if (dragCount.current <= 0) setDragging(false);
+  };
+  const onDrop = async (e) => {
+    e.preventDefault();
+    dragCount.current = 0;
+    setDragging(false);
+    await addFiles(e.dataTransfer.files);
   };
 
   return (
     <div
-      className="appShell"
       onDragEnter={onDragEnter}
+      onDragOver={(e) => e.preventDefault()}
       onDragLeave={onDragLeave}
-      onDragOver={onDragOver}
       onDrop={onDrop}
+      style={{
+        height: "100vh",
+        overflow: "hidden",
+        display: "grid",
+        gridTemplateColumns: "320px 1fr",
+        background: "radial-gradient(circle at top left, #fff3c8 0%, #fff8e8 20%, #f8fbff 55%, #eef4ff 100%)",
+        color: "#23314f",
+        fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, sans-serif",
+      }}
     >
-      {dragging ? (
-        <div className="dragOverlay">
-          <div className="dragCard">
-            <div className="dragEmoji">📎</div>
-            <div className="dragTitle">Drop files here</div>
-            <div className="dragSub">Images, code, notes, screenshots</div>
+      <style>{`
+        * { box-sizing: border-box; }
+        @keyframes blink { 50% { opacity: 0; } }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-thumb { background: rgba(103,120,170,0.25); border-radius: 999px; }
+        button { font-family: inherit; }
+        textarea::placeholder { color: rgba(35,49,79,0.48); }
+      `}</style>
+
+      {dragging && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(43,59,104,0.18)", backdropFilter: "blur(6px)", zIndex: 60, display: "grid", placeItems: "center" }}>
+          <div style={{ padding: 34, background: "white", borderRadius: 30, border: "2px dashed #7b6dff", boxShadow: "0 24px 60px rgba(32,45,85,0.18)", fontWeight: 800 }}>
+            Drop files or screenshots here
           </div>
         </div>
-      ) : null}
+      )}
 
-      <aside className="sidebar">
-        <div className="brand">Playcraft</div>
-
-        <div className="sidebarActions">
-          <button className="primaryBtn" onClick={() => createChatNow()} type="button">New chat</button>
-          <button className="secondaryBtn" onClick={createProjectNow} type="button">New project</button>
+      <aside style={{ height: "100vh", padding: 18, borderRight: "1px solid rgba(100,118,162,0.12)", background: "linear-gradient(180deg, rgba(255,255,255,0.84), rgba(249,251,255,0.62))", backdropFilter: "blur(14px)", overflow: "hidden", display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 6px 2px" }}>
+          <div>
+            <div style={{ fontWeight: 950, fontSize: 24 }}>Playcraft</div>
+            <div style={{ fontSize: 12, opacity: 0.64 }}>smart chat, code, games, study, images</div>
+          </div>
+          <div style={{ width: 46, height: 46, borderRadius: 16, display: "grid", placeItems: "center", background: "linear-gradient(135deg,#fff0b8,#ffc8aa)", fontSize: 22 }}>✨</div>
         </div>
 
-        <div className="projectList">
-          {projects.map((project) => {
-            const activeProjectNow = project.id === activeProjectId;
-            return (
-              <div key={project.id} className="projectCard">
-                <div className={`projectHeader ${activeProjectNow ? "active" : ""}`}>
+        <div style={{ display: "grid", gap: 10 }}>
+          <button onClick={addRootChat} style={primaryButtonStyle}>💬 New chat</button>
+          <button onClick={addProject} style={secondaryButtonStyle}>📁 Add project</button>
+        </div>
+
+        <div style={{ display: "grid", gap: 10 }}>
+          <SidebarAction icon="🖼️" title="Create image" subtitle="Generate an image from a prompt" onClick={() => setMode("image")} />
+          <SidebarAction icon="📘" title="Study and learn" subtitle="Ask to learn any topic clearly" onClick={() => setMode("study")} />
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", paddingRight: 4 }}>
+          <div style={sectionTitleStyle}>💬 Chats</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {rootChats.map((chat) => {
+              const active = activeType === "root" && activeId === chat.id;
+              return (
+                <div key={chat.id} onMouseEnter={() => setHoveredRoot(chat.id)} onMouseLeave={() => setHoveredRoot(null)}>
                   <button
-                    className="projectButton"
-                    type="button"
                     onClick={() => {
-                      setActiveProjectId(project.id);
-                      setActiveChatId(project.chats[0]?.id || null);
+                      setActiveType("root");
+                      setActiveId(chat.id);
+                    }}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "12px 14px",
+                      borderRadius: 18,
+                      border: active ? "1px solid rgba(123,109,255,0.36)" : "1px solid transparent",
+                      background: active ? "rgba(123,109,255,0.14)" : hoveredRoot === chat.id ? "rgba(255,255,255,0.76)" : "transparent",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      cursor: "pointer",
                     }}
                   >
-                    <span className="projectName">{project.name}</span>
-                    <span className="projectCount">{project.chats.length}</span>
+                    <div style={{ width: 34, height: 34, borderRadius: 12, display: "grid", placeItems: "center", background: active ? "rgba(123,109,255,0.18)" : "rgba(96,114,160,0.08)" }}>💬</div>
+                    <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 700 }}>{chat.title}</div>
+                    {hoveredRoot === chat.id && rootChats.length > 1 && (
+                      <span onClick={(e) => { e.stopPropagation(); deleteRootChat(chat.id); }} style={{ fontSize: 14, opacity: 0.6 }}>🗑️</span>
+                    )}
                   </button>
-                  <div className="rowActions">
-                    <button className="iconBtn" onClick={() => createChatNow(project.id)} type="button">＋</button>
-                    <button className="iconBtn" onClick={() => renameProject(project.id)} type="button">✎</button>
-                  </div>
                 </div>
+              );
+            })}
+          </div>
 
-                {activeProjectNow ? (
-                  <div className="chatList">
-                    {project.chats.map((chat) => {
-                      const activeChatNow = chat.id === activeChatId;
-                      return (
-                        <div key={chat.id} className={`chatRow ${activeChatNow ? "active" : ""}`}>
-                          <button
-                            className="chatButton"
-                            type="button"
-                            onClick={() => {
-                              setActiveProjectId(project.id);
-                              setActiveChatId(chat.id);
-                            }}
-                          >
-                            {chat.title}
-                          </button>
-                          <div className="rowActions small">
-                            <button className="iconBtn" onClick={() => renameChat(chat.id)} type="button">✎</button>
-                            {project.chats.length > 1 ? (
-                              <button className="iconBtn danger" onClick={() => removeChat(chat.id)} type="button">✕</button>
-                            ) : null}
-                          </div>
-                        </div>
-                      );
-                    })}
+          <div style={{ ...sectionTitleStyle, marginTop: 18 }}>📁 Projects</div>
+          {!projects.length && (
+            <div style={{ padding: 14, borderRadius: 18, background: "rgba(255,255,255,0.58)", border: "1px dashed rgba(101,119,168,0.18)", fontSize: 13, opacity: 0.72 }}>
+              No projects yet. Tap <strong>Add project</strong> when you want one.
+            </div>
+          )}
+
+          <div style={{ display: "grid", gap: 12 }}>
+            {projects.map((project) => (
+              <div key={project.id} onMouseEnter={() => setHoveredProject(project.id)} onMouseLeave={() => setHoveredProject(null)} style={{ borderRadius: 22, background: "rgba(255,255,255,0.72)", border: "1px solid rgba(93,113,158,0.12)", padding: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 14, display: "grid", placeItems: "center", background: `linear-gradient(135deg, ${project.color}, #ffc08c)`, color: "white", boxShadow: "0 10px 18px rgba(61,76,120,0.14)" }}>{project.icon}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{project.name}</div>
+                    <div style={{ fontSize: 12, opacity: 0.58 }}>{project.chatIds.length} chats</div>
                   </div>
-                ) : null}
+                  <button onClick={() => addChatToProject(project.id)} style={tinyIconButton}>➕</button>
+                  <button onClick={() => deleteProject(project.id)} style={tinyIconButton}>🗑️</button>
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {project.chatIds.length === 0 && <button onClick={() => addChatToProject(project.id)} style={emptyProjectButtonStyle}>➕ Add first chat</button>}
+                  {project.chatIds.map((chatId) => {
+                    const chat = projectChats[chatId];
+                    if (!chat) return null;
+                    const active = activeType === "project" && activeId === chat.id;
+                    return (
+                      <div key={chat.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <button onClick={() => { setActiveType("project"); setActiveId(chat.id); }} style={{ flex: 1, textAlign: "left", padding: "11px 12px", borderRadius: 16, border: active ? "1px solid rgba(123,109,255,0.36)" : "1px solid transparent", background: active ? "rgba(123,109,255,0.14)" : "rgba(255,255,255,0.56)", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
+                          <span>🧠</span>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 700 }}>{chat.title}</span>
+                        </button>
+                        <button onClick={() => deleteProjectChat(project.id, chat.id)} style={tinyIconButton}>✕</button>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            );
-          })}
+            ))}
+          </div>
         </div>
       </aside>
 
-      <main className="mainPanel">
-        <header className="topbar">
+      <main style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ padding: "24px 28px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
           <div>
-            <div className="topTitle">{activeProject?.name || "Playcraft"}</div>
-            <div className="topSub">
-              {activeChat?.mode === "study" ? "Study and learn mode" : "Smart build mode"} · web search auto · drag files in
+            <div style={{ fontSize: 28, fontWeight: 950 }}>{activeChat?.title || "Playcraft"}</div>
+            <div style={{ fontSize: 13, opacity: 0.64 }}>
+              {mode === "chat" ? "Chat mode" : mode === "study" ? "Study and learn mode" : "Create image mode"}
             </div>
           </div>
-          {activeChat?.mode === "study" ? <div className="modeBadge">Study</div> : null}
-        </header>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {mode !== "chat" && <button onClick={() => setMode("chat")} style={pillButtonStyle}>Back to chat</button>}
+            {loading && <button onClick={() => abortRef.current?.abort()} style={{ ...pillButtonStyle, background: "#ff8c75", color: "white", border: "none" }}>Stop</button>}
+          </div>
+        </div>
 
-        <section className="messagesPane" ref={messagesRef}>
-          {!activeChat?.messages?.length ? (
-            <div className="emptyState">
-              <div className="emptyTitle">Ask for code, games, ESP32, design, or research</div>
-              <div className="emptySub">
-                It can chat normally, study with you, analyze screenshots, and search the web when needed.
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "8px 28px 190px" }}>
+          <div style={{ maxWidth: 980, margin: "0 auto" }}>
+            {allMessages.length === 0 && (
+              <div style={{ paddingTop: 52 }}>
+                <div style={{ background: "rgba(255,255,255,0.76)", border: "1px solid rgba(100,118,162,0.14)", borderRadius: 30, padding: 30, boxShadow: "0 22px 48px rgba(32,45,85,0.08)" }}>
+                  <div style={{ fontSize: 34, fontWeight: 950, lineHeight: 1.12, maxWidth: 760 }}>Talk naturally, ask for code, create games, drag screenshots, learn something new, or tap the mic and speak.</div>
+                  <div style={{ marginTop: 18, display: "flex", flexWrap: "wrap", gap: 12 }}>
+                    {[
+                      "תסביר לי איך עובד Wordle",
+                      "תן לי קוד ל ESP32 ב Arduino IDE עם כפתור ולד",
+                      "תבנה לי משחק snake",
+                      "הנה צילום מסך, תעשה עיצוב דומה אבל שמח יותר",
+                    ].map((s) => (
+                      <button key={s} onClick={() => setComposer(s)} style={starterButtonStyle}>{s}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {allMessages.map((msg) => <ChatBubble key={msg.id} msg={msg} isTyping={typingId === msg.id} onDownloadFile={downloadFile} />)}
+            <div ref={bottomRef} />
+          </div>
+        </div>
+
+        <div style={{ position: "sticky", bottom: 0, padding: "18px 28px 24px", background: "linear-gradient(180deg, rgba(238,244,255,0) 0%, rgba(238,244,255,0.86) 20%, rgba(238,244,255,0.98) 56%)" }}>
+          <div style={{ maxWidth: 980, margin: "0 auto" }}>
+            {!!attachments.length && (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                {attachments.map((f, i) => (
+                  <div key={f.id} style={{ position: "relative", borderRadius: 18, padding: 8, background: "rgba(255,255,255,0.88)", border: "1px solid rgba(103,120,170,0.14)" }}>
+                    {f.kind === "image" ? <img src={f.previewUrl} alt={f.name} style={{ width: 74, height: 74, objectFit: "cover", borderRadius: 14 }} /> : <div style={{ minWidth: 110, fontSize: 13.5, padding: 10 }}>📄 {f.name}</div>}
+                    <button onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== i))} style={{ position: "absolute", top: -8, right: -8, border: "none", background: "#ff8c75", color: "white", width: 24, height: 24, borderRadius: 999, cursor: "pointer" }}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {error && <div style={{ marginBottom: 10, color: "#c53f35", fontWeight: 800 }}>{error}</div>}
+
+            <div style={{ position: "relative", background: "rgba(255,255,255,0.84)", border: "1px solid rgba(102,120,167,0.15)", borderRadius: 32, boxShadow: "0 20px 42px rgba(32,45,85,0.1)", padding: 14 }}>
+              <input ref={fileRef} type="file" multiple style={{ display: "none" }} onChange={(e) => addFiles(e.target.files)} />
+              <div style={{ display: "grid", gridTemplateColumns: "56px 1fr 56px 140px 56px", gap: 14, alignItems: "end" }}>
+                <div style={{ position: "relative" }}>
+                  <button onClick={() => setMenuOpen((v) => !v)} style={{ width: 56, height: 56, borderRadius: 20, border: "none", background: "linear-gradient(135deg,#ffd58d,#ff9f83)", cursor: "pointer", fontSize: 28, color: "#3c2e3f", boxShadow: "0 12px 24px rgba(255,159,131,0.24)" }}>+</button>
+                  {menuOpen && (
+                    <div style={{ position: "absolute", bottom: 68, left: 0, width: 240, background: "white", borderRadius: 22, border: "1px solid rgba(106,123,170,0.14)", boxShadow: "0 24px 54px rgba(28,42,77,0.16)", padding: 8, zIndex: 20 }}>
+                      <button onClick={() => { setMenuOpen(false); fileRef.current?.click(); }} style={menuItemStyle}>📎 Add file</button>
+                      <button onClick={() => { setMenuOpen(false); setMode("study"); }} style={menuItemStyle}>📘 Study and learn</button>
+                      <button onClick={() => { setMenuOpen(false); setMode("image"); }} style={menuItemStyle}>🖼️ Create image</button>
+                      <button onClick={() => { setMenuOpen(false); addRootChat(); }} style={menuItemStyle}>💬 New chat</button>
+                      <button onClick={() => { setMenuOpen(false); addProject(); }} style={menuItemStyle}>📁 Add project</button>
+                    </div>
+                  )}
+                </div>
+
+                <textarea
+                  value={composer}
+                  onChange={(e) => setComposer(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      send();
+                    }
+                  }}
+                  placeholder={mode === "image" ? "Describe the image you want..." : mode === "study" ? "What do you want to learn?" : "Ask anything, drag files, or tap the mic and speak..."}
+                  rows={1}
+                  style={{ minHeight: 56, maxHeight: 180, resize: "none", border: "none", outline: "none", background: "transparent", fontSize: 18, lineHeight: 1.65, padding: "12px 0 4px", width: "100%" }}
+                />
+
+                <button onClick={toggleVoice} title={speechSupported ? (isListening ? "Stop recording" : "Record voice") : "Voice is not supported here"} style={{ width: 56, height: 56, borderRadius: 20, border: "none", cursor: "pointer", background: isListening ? "linear-gradient(135deg,#ff8370,#ff5f7c)" : "rgba(123,109,255,0.12)", color: isListening ? "#fff" : "#5a58dd", fontWeight: 900, fontSize: 21 }}>
+                  {isListening ? "◼" : "🎤"}
+                </button>
+
+                <div style={{ alignSelf: "center", justifySelf: "stretch" }}>
+                  <div style={{ padding: "12px 14px", borderRadius: 18, background: mode === "chat" ? "rgba(123,109,255,0.1)" : mode === "study" ? "rgba(88,194,151,0.16)" : "rgba(255,160,115,0.16)", fontWeight: 800, textAlign: "center" }}>
+                    {mode === "chat" ? "Chat" : mode === "study" ? "Study" : "Image"}
+                  </div>
+                </div>
+
+                <button onClick={send} disabled={loading} style={{ width: 56, height: 56, borderRadius: 20, border: "none", cursor: "pointer", background: "linear-gradient(135deg,#7b6dff,#a06bff)", color: "#fff", fontWeight: 900, fontSize: 18, boxShadow: "0 12px 24px rgba(123,109,255,0.28)" }}>↑</button>
               </div>
             </div>
-          ) : (
-            activeChat.messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)
-          )}
-        </section>
-
-        <div className="composerWrap">
-          {attachments.length ? (
-            <div className="attachmentTray">
-              {attachments.map((file, index) => (
-                <AttachmentPill
-                  key={file.id}
-                  file={file}
-                  onRemove={() => setAttachments((prev) => prev.filter((_, i) => i !== index))}
-                />
-              ))}
-            </div>
-          ) : null}
-
-          {error ? <div className="errorBar">{error}</div> : null}
-
-          <div className="composer">
-            <div className="composerLeft">
-              <button className="plusBtn" type="button" onClick={() => setShowPlusMenu((v) => !v)}>＋</button>
-              {showPlusMenu ? (
-                <div className="plusMenu">
-                  <button type="button" onClick={() => fileInputRef.current?.click()}>Add file</button>
-                  <button type="button" onClick={setStudyMode}>
-                    {activeChat?.mode === "study" ? "Back to normal chat" : "Study and learn"}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-
-            <textarea
-              ref={textareaRef}
-              className="composerInput"
-              value={text}
-              onChange={(e) => {
-                setText(e.target.value);
-                e.target.style.height = "56px";
-                e.target.style.height = `${Math.min(e.target.scrollHeight, 220)}px`;
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  send();
-                }
-              }}
-              placeholder="Ask anything, drag in a screenshot, paste code, or ask to search the web..."
-            />
-
-            <div className="composerRight">
-              {sending ? (
-                <button className="stopBtn" type="button" onClick={stop}>Stop</button>
-              ) : (
-                <button className="sendBtn" type="button" onClick={send}>↑</button>
-              )}
-            </div>
           </div>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            hidden
-            onChange={(e) => e.target.files && attachFiles(e.target.files)}
-          />
         </div>
       </main>
-
-      <style jsx>{`
-        :global(html, body) {
-          margin: 0;
-          padding: 0;
-          background: #171513;
-          color: #f5efe6;
-          font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        }
-        :global(*) { box-sizing: border-box; }
-        .appShell {
-          height: 100vh;
-          display: flex;
-          overflow: hidden;
-          background: radial-gradient(circle at top left, rgba(215,164,91,0.12), transparent 28%), #171513;
-          position: relative;
-        }
-        .sidebar {
-          width: 286px;
-          flex-shrink: 0;
-          border-right: 1px solid rgba(255,255,255,0.08);
-          padding: 20px 14px 16px;
-          display: flex;
-          flex-direction: column;
-          gap: 14px;
-          background: rgba(16,15,14,0.78);
-          backdrop-filter: blur(14px);
-          position: sticky;
-          top: 0;
-          height: 100vh;
-          overflow: auto;
-        }
-        .brand { font-size: 22px; font-weight: 800; letter-spacing: -0.03em; }
-        .sidebarActions { display: grid; gap: 8px; }
-        .primaryBtn, .secondaryBtn {
-          width: 100%; border: 0; border-radius: 14px; padding: 12px 14px; cursor: pointer; font-size: 14px; font-weight: 700;
-        }
-        .primaryBtn { background: #f5efe6; color: #171513; }
-        .secondaryBtn { background: rgba(255,255,255,0.06); color: #f5efe6; }
-        .projectList { display: flex; flex-direction: column; gap: 10px; overflow: auto; padding-bottom: 28px; }
-        .projectCard { border-radius: 16px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); }
-        .projectHeader { display: flex; align-items: center; justify-content: space-between; padding: 8px; border-radius: 16px; }
-        .projectHeader.active { background: rgba(255,255,255,0.05); }
-        .projectButton { flex: 1; background: transparent; color: inherit; border: 0; text-align: left; padding: 6px 8px; cursor: pointer; }
-        .projectName { display: block; font-size: 14px; font-weight: 700; }
-        .projectCount { display: block; font-size: 12px; color: rgba(245,239,230,0.55); margin-top: 3px; }
-        .rowActions { display: flex; align-items: center; gap: 6px; }
-        .rowActions.small { opacity: 0; transition: opacity .15s ease; }
-        .chatRow:hover .rowActions.small, .chatRow.active .rowActions.small { opacity: 1; }
-        .iconBtn {
-          width: 28px; height: 28px; border-radius: 10px; border: 0; cursor: pointer;
-          background: transparent; color: rgba(245,239,230,0.75);
-        }
-        .iconBtn:hover { background: rgba(255,255,255,0.08); color: #fff; }
-        .iconBtn.danger:hover { background: rgba(255,92,92,0.12); color: #ff8e8e; }
-        .chatList { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 4px; }
-        .chatRow {
-          display: flex; align-items: center; gap: 8px; padding: 4px; border-radius: 12px;
-        }
-        .chatRow.active, .chatRow:hover { background: rgba(255,255,255,0.05); }
-        .chatButton { flex: 1; background: transparent; border: 0; color: inherit; text-align: left; padding: 8px 10px; cursor: pointer; font-size: 13px; }
-        .mainPanel { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100vh; }
-        .topbar {
-          padding: 20px 28px 14px; border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: space-between; gap: 16px;
-          backdrop-filter: blur(12px); background: rgba(23,21,19,0.72);
-        }
-        .topTitle { font-size: 20px; font-weight: 800; }
-        .topSub { font-size: 13px; color: rgba(245,239,230,0.6); margin-top: 4px; }
-        .modeBadge { padding: 8px 12px; border-radius: 999px; background: rgba(215,164,91,0.15); color: #ffd797; font-size: 12px; font-weight: 700; }
-        .messagesPane { flex: 1; overflow: auto; padding: 24px 28px 180px; }
-        .emptyState {
-          max-width: 760px; margin: 12vh auto 0; text-align: center; padding: 28px; border-radius: 28px;
-          border: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.03);
-        }
-        .emptyTitle { font-size: 28px; line-height: 1.15; font-weight: 800; }
-        .emptySub { color: rgba(245,239,230,0.68); font-size: 15px; line-height: 1.7; margin-top: 10px; }
-        .messageRow { max-width: 960px; margin: 0 auto 18px; display: flex; gap: 14px; align-items: flex-start; }
-        .avatar {
-          width: 34px; height: 34px; border-radius: 12px; display: grid; place-items: center; font-size: 13px; font-weight: 800;
-          background: rgba(255,255,255,0.08); color: #fff; flex-shrink: 0;
-        }
-        .messageBody { flex: 1; min-width: 0; }
-        .messageHeader { font-size: 12px; color: rgba(245,239,230,0.55); margin-bottom: 8px; }
-        .messageFiles { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
-        .bubble { border-radius: 20px; padding: 16px 18px; border: 1px solid rgba(255,255,255,0.08); }
-        .userBubble { background: rgba(255,255,255,0.07); }
-        .assistantBubble { background: rgba(255,255,255,0.03); }
-        .bubbleText { white-space: pre-wrap; line-height: 1.75; font-size: 15px; }
-        .sourcesWrap { margin-top: 10px; }
-        .sourcesTitle { font-size: 12px; color: rgba(245,239,230,0.5); margin-bottom: 6px; }
-        .sourcesList { display: flex; flex-wrap: wrap; gap: 8px; }
-        .sourceItem {
-          display: inline-flex; align-items: center; gap: 8px; text-decoration: none; color: #f5efe6;
-          padding: 8px 10px; border-radius: 999px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.06);
-          max-width: 100%;
-        }
-        .sourceIndex {
-          width: 18px; height: 18px; border-radius: 999px; display: grid; place-items: center;
-          background: rgba(215,164,91,0.18); color: #ffd797; font-size: 11px; font-weight: 800;
-        }
-        .sourceText { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
-        .composerWrap {
-          position: sticky; bottom: 0; padding: 10px 28px 24px; background: linear-gradient(to top, rgba(23,21,19,0.98), rgba(23,21,19,0.84), transparent);
-        }
-        .composer { max-width: 960px; margin: 0 auto; position: relative; display: flex; gap: 12px; align-items: flex-end; padding: 14px; border-radius: 28px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 20px 60px rgba(0,0,0,0.25); }
-        .composerLeft, .composerRight { flex-shrink: 0; position: relative; }
-        .composerInput {
-          flex: 1; min-height: 56px; max-height: 220px; resize: none; border: 0; outline: none; background: transparent; color: #f5efe6; font-size: 16px; line-height: 1.6; padding: 8px 0;
-        }
-        .composerInput::placeholder { color: rgba(245,239,230,0.45); }
-        .plusBtn, .sendBtn, .stopBtn {
-          border: 0; cursor: pointer; border-radius: 18px; height: 52px; min-width: 52px; padding: 0 16px; font-weight: 800; font-size: 16px;
-        }
-        .plusBtn { background: rgba(0,0,0,0.28); color: #fff; }
-        .sendBtn { background: #f5efe6; color: #171513; }
-        .stopBtn { background: rgba(255,92,92,0.12); color: #ffb1b1; }
-        .plusMenu {
-          position: absolute; bottom: 64px; left: 0; min-width: 190px; border-radius: 18px; overflow: hidden;
-          background: #25211d; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 14px 40px rgba(0,0,0,0.35);
-        }
-        .plusMenu button {
-          width: 100%; background: transparent; color: #f5efe6; border: 0; text-align: left; padding: 14px 14px; cursor: pointer; font-size: 14px;
-        }
-        .plusMenu button:hover { background: rgba(255,255,255,0.06); }
-        .attachmentTray { max-width: 960px; margin: 0 auto 12px; display: flex; flex-wrap: wrap; gap: 10px; }
-        .attachmentPill {
-          display: inline-flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 16px;
-          background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); min-width: 0;
-        }
-        .attachmentThumb { width: 40px; height: 40px; object-fit: cover; border-radius: 10px; }
-        .attachmentIcon { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: rgba(255,255,255,0.08); }
-        .attachmentMeta { min-width: 0; }
-        .attachmentName { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
-        .attachmentSize { font-size: 11px; color: rgba(245,239,230,0.5); margin-top: 2px; }
-        .tinyGhost { border: 0; background: transparent; color: rgba(245,239,230,0.6); cursor: pointer; }
-        .typingDots { display: inline-flex; gap: 6px; align-items: center; height: 18px; }
-        .typingDots span {
-          width: 7px; height: 7px; border-radius: 999px; background: rgba(245,239,230,0.75); animation: jump 1s infinite ease-in-out;
-        }
-        .typingDots span:nth-child(2) { animation-delay: .12s; }
-        .typingDots span:nth-child(3) { animation-delay: .24s; }
-        .dragOverlay {
-          position: fixed; inset: 0; z-index: 50; background: rgba(10,10,10,0.55); display: grid; place-items: center;
-          backdrop-filter: blur(6px);
-        }
-        .dragCard { padding: 30px 34px; border-radius: 28px; border: 1px solid rgba(255,255,255,0.1); background: #211c18; text-align: center; }
-        .dragEmoji { font-size: 38px; }
-        .dragTitle { margin-top: 10px; font-size: 22px; font-weight: 800; }
-        .dragSub { margin-top: 6px; font-size: 14px; color: rgba(245,239,230,0.6); }
-        .errorBar { max-width: 960px; margin: 0 auto 10px; color: #ffb1b1; font-size: 13px; }
-        @keyframes jump {
-          0%, 80%, 100% { transform: translateY(0); opacity: .45; }
-          40% { transform: translateY(-6px); opacity: 1; }
-        }
-        @media (max-width: 900px) {
-          .sidebar { width: 240px; }
-          .topTitle { font-size: 18px; }
-        }
-      `}</style>
     </div>
   );
 }
+
+const primaryButtonStyle = {
+  border: "none",
+  cursor: "pointer",
+  padding: "14px 16px",
+  borderRadius: 18,
+  background: "linear-gradient(135deg,#7b6dff,#a06bff)",
+  color: "#fff",
+  fontWeight: 800,
+  fontSize: 15,
+  boxShadow: "0 14px 28px rgba(123,109,255,0.22)",
+  textAlign: "left",
+};
+
+const secondaryButtonStyle = {
+  border: "1px solid rgba(104,120,168,0.14)",
+  cursor: "pointer",
+  padding: "13px 16px",
+  borderRadius: 18,
+  background: "rgba(255,255,255,0.72)",
+  fontWeight: 800,
+  fontSize: 15,
+  textAlign: "left",
+};
+
+const sectionTitleStyle = {
+  fontSize: 12,
+  fontWeight: 850,
+  letterSpacing: ".05em",
+  opacity: 0.58,
+  margin: "12px 8px 10px",
+  textTransform: "uppercase",
+};
+
+const tinyIconButton = {
+  border: "none",
+  background: "rgba(96,114,160,0.08)",
+  cursor: "pointer",
+  width: 34,
+  height: 34,
+  borderRadius: 12,
+};
+
+const emptyProjectButtonStyle = {
+  border: "1px dashed rgba(103,120,170,0.24)",
+  background: "rgba(255,255,255,0.58)",
+  cursor: "pointer",
+  padding: "12px 14px",
+  borderRadius: 16,
+  textAlign: "left",
+  fontWeight: 700,
+};
+
+const starterButtonStyle = {
+  border: "1px solid rgba(123,109,255,0.14)",
+  background: "#fff",
+  padding: "12px 14px",
+  borderRadius: 16,
+  cursor: "pointer",
+  fontWeight: 700,
+};
+
+const pillButtonStyle = {
+  border: "1px solid rgba(123,109,255,0.18)",
+  background: "rgba(255,255,255,0.8)",
+  borderRadius: 999,
+  padding: "10px 14px",
+  cursor: "pointer",
+  fontWeight: 700,
+};
+
+const menuItemStyle = {
+  width: "100%",
+  textAlign: "left",
+  padding: "12px 14px",
+  border: "none",
+  background: "transparent",
+  borderRadius: 14,
+  cursor: "pointer",
+  fontSize: 15,
+};
