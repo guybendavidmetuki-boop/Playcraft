@@ -195,8 +195,8 @@ function CodeCard({ html, onPreview, onCopy, onDownload, onRepair, busy }) {
     >
       <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <div>
-          <div style={{ color: "#f4eee4", fontSize: 15, fontWeight: 600 }}>game.html</div>
-          <div style={{ color: "#a79f93", fontSize: 12, marginTop: 4 }}>Generated playable game file</div>
+          <div style={{ color: "#f4eee4", fontSize: 15, fontWeight: 600 }}>output.html</div>
+          <div style={{ color: "#a79f93", fontSize: 12, marginTop: 4 }}>Generated HTML file</div>
         </div>
         <ActionButton label="Open preview" onClick={() => onPreview(html)} />
       </div>
@@ -525,8 +525,8 @@ export default function App() {
   const repairHtml = useCallback((html) => {
     if (!html || loading) return;
     sendMessage({
-      text: "Repair the current game. Keep the same core idea, fix bugs, improve controls, polish the UI, and return the full HTML again.",
-      files: [{ id: uid(), name: "game.html", type: "text/html", text: html }]
+      text: "Repair the current HTML project. Keep the same idea, fix bugs, improve the code and UI, and return the full HTML again.",
+      files: [{ id: uid(), name: "output.html", type: "text/html", text: html }]
     });
   }, [loading, sendMessage]);
 
@@ -548,7 +548,7 @@ export default function App() {
   }, []);
 
   const downloadHtml = useCallback((html) => {
-    downloadTextFile("game.html", html);
+    downloadTextFile("output.html", html);
     setToast("Downloaded");
   }, []);
 
@@ -664,7 +664,7 @@ export default function App() {
             <div style={{ width: "min(880px, 100%)", margin: "0 auto", padding: "28px 28px 0" }}>
               {!renderedMessages.length ? (
                 <div style={{ minHeight: "46vh", display: "grid", placeItems: "center", color: "#9d968c", fontSize: 15 }}>
-                  Start a new game idea, paste code, or attach files.
+                  Ask anything, paste code, or attach files.
                 </div>
               ) : (
                 renderedMessages.map((msg) => (
@@ -711,13 +711,13 @@ export default function App() {
                 }}
                 onKeyDown={onKeyDown}
                 disabled={loading}
-                placeholder="Describe the game, paste code, or ask a follow-up..."
+                placeholder="Ask anything, paste code, ask for ESP32, Arduino, games, or follow-up..."
                 style={{ width: "100%", border: "none", outline: "none", resize: "none", background: "transparent", color: "#f4eee4", fontSize: 16, lineHeight: 1.7, minHeight: 96, maxHeight: 220 }}
               />
 
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
                 <IconButton icon={<PaperclipIcon />} onClick={() => fileInputRef.current?.click()} title="Add files" active />
-                <div style={{ marginLeft: "auto", color: "#c7c0b4", fontSize: 13, paddingRight: 6 }}>Claude Sonnet</div>
+                <div style={{ marginLeft: "auto", color: "#c7c0b4", fontSize: 13, paddingRight: 6 }}>Playcraft AI</div>
                 {loading ? (
                   <ActionButton label="Stop" onClick={stopGeneration} primary icon={<StopIcon />} />
                 ) : (
