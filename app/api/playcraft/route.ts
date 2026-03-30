@@ -1,185 +1,168 @@
-import { NextResponse } from "next/server";
+export const runtime = "edge";
 
-export const runtime = "nodejs";
-
-type UiFile = {
-  name: string;
-  type?: string;
-  text?: string;
-  base64?: string;
-};
-
-type UiMessage = {
-  role: "user" | "assistant";
-  content?: string;
-  files?: UiFile[];
-};
-
-const MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+const TEXT_MODEL = "groq/compound";
+const VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 
-const SYSTEM = `You are Playcraft AI, a smart general-purpose assistant.
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
+function buildSystem(mode) {
+  const base = `You are Playcraft, a smart all-purpose AI assistant.
 You are especially strong at:
+- writing real, usable code
 - building games
-- writing and fixing code
-- Arduino IDE and ESP32 projects
-- explaining technical steps simply
-- following up on previous messages naturally
+- explaining code clearly
+- ESP32 and Arduino IDE projects
+- analyzing screenshots and UI designs
+- finding current information when your model has web access
 
-Core behavior:
-- If the user is just chatting, answer normally and helpfully.
-- If the user asks for code, give complete working code when possible.
-- If the user asks for Arduino IDE or ESP32 code, return practical, ready-to-use code and simple wiring/setup notes when needed.
-- If the user asks to build or fix a game, you may generate a complete self-contained HTML file.
-- If the user attached existing code, improve or fix it instead of replacing it unless replacement is clearly better.
-- Keep answers clear, direct, and useful.
+Rules:
+- Chat normally when the user is just talking.
+- If the user asks for code, give complete usable code.
+- If the user asks for a game, build the game they asked for, not a random one.
+- If the user asks about a screenshot or design reference, analyze it carefully and be very specific.
+- If the user asks for current/latest information, use web search if available through the model.
+- Be practical and direct.`;
 
-Important formatting rule:
-- Only when the user clearly wants a playable HTML game or HTML app, return your answer in this exact format:
-<game_summary>
-A short explanation of what you built or fixed.
-</game_summary>
-<game_html>
-<!DOCTYPE html>
-...
-</game_html>
-- For everything else, answer normally. Do not use <game_html> unless the user clearly wants HTML output.`;
+  if (mode === "study") {
+    return `${base}
 
-function truncate(text: string, max = 40000) {
-  if (!text) return "";
-  return text.length <= max ? text : `${text.slice(0, max)}\n\n[truncated]`;
-}
-
-function extractHtmlFromReply(text = "") {
-  const tagMatch = text.match(/<game_html>([\s\S]*?)<\/game_html>/i);
-  if (tagMatch?.[1]) return tagMatch[1].trim();
-
-  const fenced = text.match(/```html\s*([\s\S]*?)```/i) || text.match(/```\s*([\s\S]*?)```/i);
-  if (fenced?.[1] && /<(?:!doctype|html|body|canvas|script)/i.test(fenced[1])) return fenced[1].trim();
-
-  const doctypeIndex = text.search(/<!doctype html>/i);
-  if (doctypeIndex >= 0) return text.slice(doctypeIndex).trim();
-
-  const htmlIndex = text.search(/<html[\s>]/i);
-  if (htmlIndex >= 0) return text.slice(htmlIndex).trim();
-
-  return "";
-}
-
-function extractSummaryFromReply(text = "") {
-  return text.match(/<game_summary>([\s\S]*?)<\/game_summary>/i)?.[1]?.trim() || "";
-}
-
-function buildUserText(message: UiMessage) {
-  const textSections: string[] = [];
-
-  for (const file of message.files || []) {
-    if (file.text) {
-      textSections.push(`<attachment name="${file.name}">\n${truncate(file.text)}\n</attachment>`);
-    } else if (file.type?.startsWith("image/")) {
-      textSections.push(`<attachment name="${file.name}">Image attached by user.</attachment>`);
-    } else {
-      textSections.push(`<attachment name="${file.name}">Binary file attached but no text content was available.</attachment>`);
-    }
+Study mode rules:
+- teach step by step
+- explain simply
+- help the user learn, not only copy-paste
+- still give full code if the user explicitly asks for it`;
   }
 
-  return [
-    message.content?.trim() ? `<request>\n${message.content.trim()}\n</request>` : "",
-    textSections.length ? `<attached_files>\n${textSections.join("\n\n")}\n</attached_files>` : ""
-  ]
-    .filter(Boolean)
-    .join("\n\n") || "(empty user message)";
+  return base;
 }
 
-function buildGroqMessages(messages: UiMessage[]) {
-  return [
-    { role: "system", content: SYSTEM },
-    ...messages.map((message) => {
-      if (message.role === "assistant") {
+function summarizeTextAttachment(file) {
+  const text = typeof file.text === "string" ? file.text.slice(0, 30000) : "";
+  return `\n\nAttached file: ${file.name}\nType: ${file.type || "unknown"}\n\n${text}`;
+}
+
+function normalizeMessages(messages = []) {
+  let hasImage = false;
+
+  const normalized = messages
+    .filter((msg) => msg && (msg.content || msg.files?.length))
+    .map((msg) => {
+      if (msg.role === "assistant") {
         return {
           role: "assistant",
-          content: message.content || ""
+          content: msg.content || "",
         };
       }
 
+      const files = Array.isArray(msg.files) ? msg.files : [];
+      const imageFiles = files.filter((file) => file?.type?.startsWith("image/") && file.dataUrl);
+      const textFiles = files.filter((file) => !file?.type?.startsWith("image/") && file.text);
+
+      if (imageFiles.length) hasImage = true;
+
+      if (hasImage || imageFiles.length) {
+        const parts = [];
+        let text = msg.content || "";
+        if (textFiles.length) {
+          text += textFiles.map(summarizeTextAttachment).join("\n\n");
+        }
+        parts.push({ type: "text", text: text || "Please analyze the attached file(s)." });
+        imageFiles.slice(0, 4).forEach((file) => {
+          parts.push({
+            type: "image_url",
+            image_url: { url: file.dataUrl },
+          });
+        });
+        return { role: "user", content: parts };
+      }
+
+      let text = msg.content || "";
+      if (textFiles.length) {
+        text += textFiles.map(summarizeTextAttachment).join("\n\n");
+      }
       return {
         role: "user",
-        content: buildUserText(message)
+        content: text || "Please analyze the attached file(s).",
       };
-    })
-  ];
+    });
+
+  return { normalized, hasImage };
 }
 
-function isProbablyFakeGroqKey(value: string) {
-  if (!value) return true;
-  if (/המפתח|your_key|placeholder/i.test(value)) return true;
-  if (/\s/.test(value.trim())) return true;
-  return false;
+function collectSources(message) {
+  const tools = message?.executed_tools || [];
+  const seen = new Set();
+  const sources = [];
+
+  for (const tool of tools) {
+    const results = tool?.search_results?.results || tool?.search_results || [];
+    for (const item of results) {
+      if (!item?.url || seen.has(item.url)) continue;
+      seen.add(item.url);
+      sources.push({ title: item.title || item.url, url: item.url });
+      if (sources.length >= 6) return sources;
+    }
+  }
+
+  return sources;
 }
 
-export async function POST(req: Request) {
+export async function POST(req) {
   try {
-    const apiKey = (process.env.GROQ_API_KEY || "").trim();
-
-    if (isProbablyFakeGroqKey(apiKey)) {
-      return NextResponse.json(
-        {
-          error: "GROQ_API_KEY is missing or not real. Put your real Groq key in Vercel Environment Variables."
-        },
-        { status: 500 }
-      );
+    if (!GROQ_API_KEY || GROQ_API_KEY.includes("המפתח") || GROQ_API_KEY.length < 20) {
+      return json({ error: "GROQ_API_KEY is missing or not real. Put your real Groq key in Vercel Environment Variables." }, 400);
     }
 
     const body = await req.json();
-    const messages = Array.isArray(body?.messages) ? (body.messages as UiMessage[]) : [];
+    const mode = body?.mode || "chat";
+    const messages = Array.isArray(body?.messages) ? body.messages : [];
 
-    if (!messages.length) {
-      return NextResponse.json({ error: "No messages were provided." }, { status: 400 });
+    const { normalized, hasImage } = normalizeMessages(messages);
+    if (!normalized.length) {
+      return json({ error: "No message to send." }, 400);
     }
 
-    const upstream = await fetch(GROQ_API_URL, {
+    const model = hasImage ? VISION_MODEL : TEXT_MODEL;
+
+    const groqPayload = {
+      model,
+      temperature: 0.35,
+      max_completion_tokens: 2200,
+      messages: [
+        { role: "system", content: buildSystem(mode) },
+        ...normalized,
+      ],
+    };
+
+    const response = await fetch(GROQ_API_URL, {
       method: "POST",
       headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${GROQ_API_KEY}`,
       },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: buildGroqMessages(messages),
-        temperature: 0.2,
-        max_tokens: 8192
-      }),
-      signal: req.signal
+      body: JSON.stringify(groqPayload),
     });
 
-    const json = await upstream.json();
+    const data = await response.json();
 
-    if (!upstream.ok || json?.error) {
-      return NextResponse.json(
-        {
-          error: json?.error?.message || `Groq request failed with status ${upstream.status}.`
-        },
-        { status: upstream.status || 500 }
-      );
+    if (!response.ok) {
+      const message = data?.error?.message || data?.message || "Groq request failed.";
+      return json({ error: message }, response.status);
     }
 
-    const reply = json?.choices?.[0]?.message?.content || "";
+    const message = data?.choices?.[0]?.message || {};
+    const text = message?.content || "No response.";
+    const sources = hasImage ? [] : collectSources(message);
 
-    return NextResponse.json({
-      reply,
-      summary: extractSummaryFromReply(reply),
-      generatedHtml: extractHtmlFromReply(reply),
-      model: MODEL
-    });
-  } catch (error: any) {
-    if (error?.name === "AbortError") {
-      return NextResponse.json({ error: "Request was aborted." }, { status: 499 });
-    }
-
-    return NextResponse.json(
-      { error: error?.message || "Unexpected server error." },
-      { status: 500 }
-    );
+    return json({ text, sources, model, usedVision: hasImage, usedWebSearch: !hasImage && sources.length > 0 });
+  } catch (error) {
+    return json({ error: error?.message || "Unexpected server error." }, 500);
   }
 }
