@@ -1,961 +1,1337 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-const STORAGE_KEY = "playcraft.mode.switch.v1";
-const MAX_TEXT_FILE = 20000;
-const MAX_IMAGE_SIDE = 1280;
-const IMAGE_QUALITY = 0.82;
+const STORAGE_KEY = "playcraft.ultra.v2";
+const MAX_TEXT_FILE_CHARS = 90000;
+const MAX_IMAGE_EDGE = 1400;
 
-const initialState = {
-  theme: "light",
-  projects: [],
-  chats: [],
-  activeChatId: null,
+const uid = () => Math.random().toString(36).slice(2, 10);
+const nowIso = () => new Date().toISOString();
+const nowLabel = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+const THEMES = {
+  light: {
+    name: "Light",
+    vars: {
+      "--bg": "#f6f7fb",
+      "--panel": "#ffffff",
+      "--panel-2": "#f1f3f9",
+      "--panel-3": "#eef2ff",
+      "--border": "#e3e8f4",
+      "--text": "#152033",
+      "--muted": "#667085",
+      "--soft": "#8b97ab",
+      "--bubble-user": "#e9efff",
+      "--bubble-ai": "#ffffff",
+      "--shadow": "0 16px 48px rgba(21, 32, 51, 0.08)",
+      "--danger": "#e5484d",
+      "--success": "#1f9d55",
+      "--preview-bg": "#f8fafc",
+    },
+  },
+  dark: {
+    name: "Dark",
+    vars: {
+      "--bg": "#0d1220",
+      "--panel": "#141b2d",
+      "--panel-2": "#101727",
+      "--panel-3": "#18223a",
+      "--border": "#26314d",
+      "--text": "#edf3ff",
+      "--muted": "#93a3bf",
+      "--soft": "#687792",
+      "--bubble-user": "#1b315a",
+      "--bubble-ai": "#162037",
+      "--shadow": "0 18px 54px rgba(0, 0, 0, 0.28)",
+      "--danger": "#ff6b7a",
+      "--success": "#47d18c",
+      "--preview-bg": "#0a1020",
+    },
+  },
+  sunrise: {
+    name: "Sunrise",
+    vars: {
+      "--bg": "#fff7f0",
+      "--panel": "#ffffff",
+      "--panel-2": "#fff1e6",
+      "--panel-3": "#ffe4d2",
+      "--border": "#ffd4b8",
+      "--text": "#3a2418",
+      "--muted": "#8b5e47",
+      "--soft": "#b57f67",
+      "--bubble-user": "#ffe9db",
+      "--bubble-ai": "#fffaf6",
+      "--shadow": "0 16px 48px rgba(120, 67, 37, 0.10)",
+      "--danger": "#df5a49",
+      "--success": "#3d9b62",
+      "--preview-bg": "#fff8f3",
+    },
+  },
+  mint: {
+    name: "Mint",
+    vars: {
+      "--bg": "#f1fffb",
+      "--panel": "#ffffff",
+      "--panel-2": "#ebfdf7",
+      "--panel-3": "#dcfaf0",
+      "--border": "#c8f0e2",
+      "--text": "#12332c",
+      "--muted": "#5f8f82",
+      "--soft": "#78a89b",
+      "--bubble-user": "#dff8ef",
+      "--bubble-ai": "#ffffff",
+      "--shadow": "0 16px 48px rgba(18, 51, 44, 0.08)",
+      "--danger": "#d95454",
+      "--success": "#1f9d73",
+      "--preview-bg": "#f6fffb",
+    },
+  },
 };
 
-function uid() {
-  return Math.random().toString(36).slice(2, 10);
-}
+const ACCENTS = ["#6d5efc", "#ff7a59", "#0ea5e9", "#22c55e", "#ec4899", "#f59e0b"];
+const MODE_OPTIONS = [
+  { id: "chat", label: "Chat", icon: "💬" },
+  { id: "build", label: "Build", icon: "🛠️" },
+  { id: "study", label: "Study", icon: "📚" },
+  { id: "image", label: "Create image", icon: "🖼️" },
+  { id: "code", label: "Code", icon: "💻" },
+  { id: "fix", label: "Fix code", icon: "🧰" },
+  { id: "arduino", label: "Arduino / ESP32", icon: "🔌" },
+];
+const STUDY_OPTIONS = [
+  { id: "explain", label: "Explain simply" },
+  { id: "quiz", label: "Quiz mode" },
+  { id: "flashcards", label: "Flashcards" },
+  { id: "questions", label: "Ask me questions" },
+  { id: "file", label: "Study from file" },
+];
+const STYLE_OPTIONS = ["modern", "minimal", "neon", "pixel", "horror"];
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function createChat({ projectId = null, mode = "chat", title = "New chat" } = {}) {
+function createProject(name = "New project") {
   return {
     id: uid(),
-    projectId,
-    title,
-    mode,
+    name,
     createdAt: nowIso(),
     updatedAt: nowIso(),
+    pinned: false,
+    memory: "",
+    stylePreset: "modern",
+    fileLibrary: {},
+  };
+}
+
+function createChat({ title = "New chat", projectId = null, mode = "chat", studyMode = "explain" } = {}) {
+  return {
+    id: uid(),
+    title,
+    projectId,
+    pinned: false,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    mode,
+    studyMode,
     messages: [],
+    previewArtifactId: null,
+    summary: "",
   };
 }
 
-function escapeHtml(str) {
-  return (str || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+function defaultStore() {
+  const firstChat = createChat({ title: "New chat" });
+  return {
+    chats: [firstChat],
+    projects: [],
+    activeChatId: firstChat.id,
+    search: "",
+    theme: "light",
+    accent: ACCENTS[0],
+    splitView: true,
+    voiceReply: false,
+  };
 }
 
-function summarizeChat(messages) {
-  const source = messages
-    .filter((m) => m.role === "user")
-    .map((m) => m.content || "")
-    .join(" ")
-    .toLowerCase();
+function safeJsonParse(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
 
-  const original = messages
+function summarizeChatTitle(messages) {
+  const userTexts = messages
     .filter((m) => m.role === "user")
-    .map((m) => m.content || "")
-    .join(" ");
-
-  const words = original
-    .replace(/[.,/#!$%^&*;:{}=\-_`~()\[\]<>?"'\\|]/g, " ")
-    .split(/\s+/)
-    .map((w) => w.trim())
+    .map((m) => (m.text || "").trim())
     .filter(Boolean)
-    .filter((w) => w.length > 1)
-    .filter(
-      (w) =>
-        ![
-          "the",
-          "and",
-          "for",
-          "with",
-          "that",
-          "this",
-          "you",
-          "your",
-          "from",
-          "של",
-          "עם",
-          "זה",
-          "אני",
-          "את",
-          "הוא",
-          "היא",
-          "אבל",
-          "כזה",
-          "יותר",
-          "וגם",
-          "שזה",
-          "יהיה",
-        ].includes(w.toLowerCase())
-    );
-
-  const freq = new Map();
-  for (const word of words) freq.set(word, (freq.get(word) || 0) + 1);
-  const top = [...freq.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 4)
-    .map(([w]) => w);
-
-  if (/wordle|וורדל/.test(source)) return "Wordle game";
-  if (/esp32|arduino/.test(source)) return "ESP32 / Arduino";
-  if (/snake|סנייק/.test(source)) return "Snake game";
-  if (/image|תמונה|ציור/.test(source)) return "Image creation";
-  if (/study|learn|ללמוד|לימוד/.test(source)) return "Study and learn";
-  if (/game|משחק/.test(source) && top.length) return top.slice(0, 2).join(" ");
-  if (top.length) return top.slice(0, 3).join(" ");
-  return "New chat";
+    .slice(-3)
+    .join(" • ");
+  const clean = userTexts
+    .replace(/\s+/g, " ")
+    .replace(/[`*_#>-]/g, "")
+    .trim();
+  if (!clean) return "New chat";
+  const bits = clean.split(/[.!?\n]|\s•\s/).map((s) => s.trim()).filter(Boolean);
+  const best = bits[0] || clean;
+  return best.length > 34 ? `${best.slice(0, 34).trim()}…` : best;
 }
 
-function codeSegments(text) {
-  const src = text || "";
-  const parts = src.split(/```/);
-  const out = [];
-  for (let i = 0; i < parts.length; i++) {
-    if (i % 2 === 0) {
-      if (parts[i]) out.push({ type: "text", content: parts[i] });
-    } else {
-      const block = parts[i];
-      const nl = block.indexOf("\n");
-      const lang = nl === -1 ? "" : block.slice(0, nl).trim();
-      const code = nl === -1 ? block : block.slice(nl + 1);
-      out.push({ type: "code", lang, content: code });
-    }
+function sortPinned(items) {
+  return [...items].sort((a, b) => {
+    if (Number(b.pinned) !== Number(a.pinned)) return Number(b.pinned) - Number(a.pinned);
+    return new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0);
+  });
+}
+
+function parseCodeBlocks(text) {
+  const parts = [];
+  const regex = /```(\w+)?\n([\s\S]*?)```/g;
+  let last = 0;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > last) parts.push({ type: "text", content: text.slice(last, match.index) });
+    parts.push({ type: "code", lang: match[1] || "text", content: match[2] });
+    last = regex.lastIndex;
   }
-  return out.length ? out : [{ type: "text", content: src }];
+  if (last < text.length) parts.push({ type: "text", content: text.slice(last) });
+  return parts;
 }
 
-function renderTextBlock(text) {
-  const safe = escapeHtml(text || "");
-  const lines = safe.split("\n");
-  const chunks = [];
-  let list = [];
-
-  const flushList = () => {
-    if (!list.length) return;
-    chunks.push(`<ul>${list.map((i) => `<li>${i}</li>`).join("")}</ul>`);
-    list = [];
-  };
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      flushList();
-      chunks.push("<div class='pc-gap'></div>");
-      continue;
-    }
-    if (/^[-*•]\s+/.test(trimmed)) {
-      list.push(trimmed.replace(/^[-*•]\s+/, ""));
-      continue;
-    }
-    flushList();
-    if (/^#{1,3}\s+/.test(trimmed)) {
-      const level = Math.min((trimmed.match(/^#+/) || [""])[0].length, 3);
-      chunks.push(`<h${level}>${trimmed.replace(/^#{1,3}\s+/, "")}</h${level}>`);
-    } else {
-      chunks.push(`<p>${trimmed}</p>`);
-    }
+function inferWorkingLabel(mode) {
+  switch (mode) {
+    case "build":
+      return "Building something nice…";
+    case "image":
+      return "Creating image…";
+    case "study":
+      return "Studying and organizing…";
+    case "code":
+    case "fix":
+    case "arduino":
+      return "Writing clean code…";
+    default:
+      return "Thinking…";
   }
-  flushList();
-  return chunks.join("");
 }
 
-function CodeBlock({ code, lang }) {
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(code || "");
-    } catch {}
-  };
-  return (
-    <div className="pc-code-wrap">
-      <div className="pc-code-top">
-        <span>{lang || "code"}</span>
-        <button onClick={copy}>Copy</button>
-      </div>
-      <pre className="pc-code"><code>{code}</code></pre>
-    </div>
-  );
+function useOutsideClick(refs, handler) {
+  useEffect(() => {
+    const onDown = (event) => {
+      const isInside = refs.some((ref) => ref?.current && ref.current.contains(event.target));
+      if (!isInside) handler();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [refs, handler]);
 }
 
-function MessageBody({ text }) {
-  const segments = codeSegments(text);
-  return (
-    <div className="pc-body">
-      {segments.map((seg, idx) =>
-        seg.type === "code" ? (
-          <CodeBlock key={idx} code={seg.content} lang={seg.lang} />
-        ) : (
-          <div key={idx} className="pc-rich" dangerouslySetInnerHTML={{ __html: renderTextBlock(seg.content) }} />
-        )
-      )}
-    </div>
-  );
+function applyTheme(themeId, accent) {
+  const theme = THEMES[themeId] || THEMES.light;
+  Object.entries(theme.vars).forEach(([key, value]) => document.documentElement.style.setProperty(key, value));
+  document.documentElement.style.setProperty("--accent", accent);
+  document.documentElement.style.setProperty("--accent-soft", `${accent}22`);
 }
 
-function bytesToBase64(bytes) {
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.slice(i, i + chunk));
-  }
-  return btoa(binary);
+async function fileToText(file) {
+  const text = await file.text();
+  return text.length > MAX_TEXT_FILE_CHARS ? `${text.slice(0, MAX_TEXT_FILE_CHARS)}\n\n[truncated]` : text;
 }
 
-async function imageFileToPayload(file) {
+async function resizeImageFile(file) {
   const dataUrl = await new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => resolve(fr.result);
-    fr.onerror = reject;
-    fr.readAsDataURL(file);
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
   });
-
   const img = await new Promise((resolve, reject) => {
-    const el = new Image();
-    el.onload = () => resolve(el);
-    el.onerror = reject;
-    el.src = dataUrl;
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = dataUrl;
   });
-
-  const ratio = Math.min(1, MAX_IMAGE_SIDE / Math.max(img.width, img.height));
+  const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(img.width, img.height));
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(img.width * ratio));
-  canvas.height = Math.max(1, Math.round(img.height * ratio));
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
   const ctx = canvas.getContext("2d");
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  const outUrl = canvas.toDataURL("image/jpeg", IMAGE_QUALITY);
+  const out = canvas.toDataURL("image/jpeg", 0.88);
   return {
     kind: "image",
     name: file.name,
     mime: "image/jpeg",
-    dataUrl: outUrl,
-    base64: outUrl.split(",")[1],
+    dataUrl: out,
+    base64: out.split(",")[1],
   };
 }
 
-async function textFileToPayload(file) {
-  const text = await file.text();
-  return {
-    kind: "text",
-    name: file.name,
-    mime: file.type || "text/plain",
-    text: text.slice(0, MAX_TEXT_FILE),
-    truncated: text.length > MAX_TEXT_FILE,
-  };
-}
-
-async function filesToPayload(fileList) {
-  const list = Array.from(fileList || []);
-  const out = [];
-  for (const file of list) {
-    if ((file.type || "").startsWith("image/")) out.push(await imageFileToPayload(file));
-    else out.push(await textFileToPayload(file));
+async function normalizeFiles(fileList) {
+  const files = Array.from(fileList || []);
+  const normalized = [];
+  for (const file of files) {
+    if (file.type.startsWith("image/")) {
+      normalized.push(await resizeImageFile(file));
+    } else if (
+      file.type.startsWith("text/") ||
+      /\.(txt|md|js|jsx|ts|tsx|json|css|html|xml|csv|yml|yaml|ino|cpp|c|h|hpp|py|java|rb|php)$/i.test(file.name)
+    ) {
+      normalized.push({
+        kind: "text",
+        name: file.name,
+        mime: file.type || "text/plain",
+        text: await fileToText(file),
+      });
+    } else {
+      normalized.push({ kind: "file", name: file.name, mime: file.type || "application/octet-stream" });
+    }
   }
-  return out;
+  return normalized;
 }
 
-function MicIcon() {
+function MicrophoneIcon({ active }) {
   return (
-    <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 15a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Z" />
-      <path d="M19 11a7 7 0 0 1-14 0" />
-      <path d="M12 18v4" />
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <path d="M12 19v3" />
       <path d="M8 22h8" />
+      {active ? <circle cx="18.5" cy="5.5" r="2.5" fill="currentColor" stroke="none" /> : null}
     </svg>
   );
 }
 
 function PlusIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
       <path d="M12 5v14M5 12h14" />
     </svg>
   );
 }
 
-function SendIcon() {
+function SparkIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m22 2-7 20-4-9-9-4Z" />
-      <path d="M22 2 11 13" />
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <path d="m12 3 1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7L12 3Z" />
+      <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z" />
+      <path d="M5 15l.8 2.2L8 18l-2.2.8L5 21l-.8-2.2L2 18l2.2-.8L5 15Z" />
     </svg>
   );
 }
 
-function MoonIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
-    </svg>
+function PinIcon({ filled = false }) {
+  return filled ? (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M14 2v2l2 3v4l2 2v1h-5v8h-2v-8H6v-1l2-2V7l2-3V2z"/></svg>
+  ) : (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2v2l2 3v4l2 2v1h-5v8h-2v-8H6v-1l2-2V7l2-3V2z"/></svg>
   );
 }
 
-function SunIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 6h18" />
-      <path d="M8 6V4h8v2" />
-      <path d="M19 6l-1 14H6L5 6" />
-    </svg>
-  );
-}
-
-function FolderIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
-    </svg>
-  );
-}
-
-function ChatIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-    </svg>
-  );
-}
-
-function WandIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m7 21 3-3" />
-      <path d="m16 5 3-3" />
-      <path d="M3 7h4" />
-      <path d="M17 21h4" />
-      <path d="m12 3 1 3" />
-      <path d="m12 18 1 3" />
-      <path d="m7 17 10-10" />
-    </svg>
-  );
-}
-
-function BookIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" />
-    </svg>
-  );
-}
-
-function ImageIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-      <circle cx="9" cy="9" r="2" />
-      <path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" />
-    </svg>
-  );
+function SearchIcon() {
+  return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>;
 }
 
 function FileIcon() {
+  return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>;
+}
+
+function ImageIcon() {
+  return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5L5 20"/></svg>;
+}
+
+function ArrowIcon() {
+  return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>;
+}
+
+function DownloadIcon() {
+  return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>;
+}
+
+function TrashIcon() {
+  return <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m6 6 1 14h10l1-14"/></svg>;
+}
+
+function RenameIcon() {
+  return <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4Z"/></svg>;
+}
+
+function ThemeIcon() {
+  return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>;
+}
+
+function MessageBody({ text }) {
+  const parts = parseCodeBlocks(text || "");
   return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <path d="M14 2v6h6" />
-    </svg>
+    <div style={{ display: "grid", gap: 10 }}>
+      {parts.map((part, idx) =>
+        part.type === "code" ? (
+          <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: 16, background: "var(--panel-2)", overflow: "hidden" }}>
+            <div style={{ padding: "8px 12px", fontSize: 12, color: "var(--soft)", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between" }}>
+              <span>{part.lang}</span>
+            </div>
+            <pre style={{ margin: 0, padding: 14, overflowX: "auto", fontSize: 13, lineHeight: 1.55, color: "var(--text)" }}><code>{part.content}</code></pre>
+          </div>
+        ) : (
+          <div key={idx} style={{ whiteSpace: "pre-wrap", lineHeight: 1.72, fontSize: 15 }}>{part.content}</div>
+        )
+      )}
+    </div>
   );
 }
 
-function ModeBadge({ mode }) {
-  const label = mode === "study" ? "Study" : mode === "image" ? "Image" : mode === "build" ? "Build" : "Chat";
-  const icon = mode === "study" ? <BookIcon /> : mode === "image" ? <ImageIcon /> : mode === "build" ? <WandIcon /> : <ChatIcon />;
-  return <span className="pc-mode-badge">{icon}<span>{label}</span></span>;
-}
-
-function FileCard({ file }) {
-  const [blobUrl, setBlobUrl] = useState(null);
-
-  useEffect(() => {
-    if (!file?.content) return;
-    const blob = new Blob([file.content], { type: file.mime || "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    setBlobUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
-
-  const openWeb = () => {
-    if (!blobUrl) return;
-    window.open(blobUrl, "_blank", "noopener,noreferrer");
-  };
-
+function ArtifactCard({ artifact, onOpen, onDownload, onPreview, onVersions }) {
+  const isImage = artifact.kind === "image" || artifact.mime?.startsWith("image/");
   return (
-    <div className="pc-file-card">
-      <div className="pc-file-head">
-        <div className="pc-file-name"><FileIcon /> <span>{file.name}</span></div>
+    <div style={{ border: "1px solid var(--border)", background: "var(--panel)", borderRadius: 18, padding: 12, display: "grid", gap: 10, minWidth: 220 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ width: 34, height: 34, borderRadius: 12, background: "var(--panel-3)", display: "grid", placeItems: "center" }}>
+          {isImage ? <ImageIcon /> : <FileIcon />}
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{artifact.name}</div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>v{artifact.version || 1} • {artifact.kind || artifact.mime || "file"}</div>
+        </div>
       </div>
-      <div className="pc-file-actions">
-        <button onClick={openWeb}>Open in web</button>
-        <a href={blobUrl || undefined} download={file.name}>Download</a>
+      {isImage && artifact.url ? (
+        <img src={artifact.url} alt={artifact.name} style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 14, border: "1px solid var(--border)" }} />
+      ) : null}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="pc-chip" onClick={() => onOpen(artifact)}><ArrowIcon /> Open in web</button>
+        <button className="pc-chip" onClick={() => onDownload(artifact)}><DownloadIcon /> Download</button>
+        {(artifact.kind === "html" || /html/i.test(artifact.name)) ? <button className="pc-chip" onClick={() => onPreview(artifact)}>Preview</button> : null}
+        {artifact.versionCount > 1 ? <button className="pc-chip" onClick={() => onVersions(artifact)}>Versions</button> : null}
       </div>
     </div>
   );
 }
 
-function App() {
-  const hydrated = useRef(false);
-  const inputRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const plusMenuRef = useRef(null);
-  const modeMenuRef = useRef(null);
-  const recognitionRef = useRef(null);
-  const autoSendAfterVoiceRef = useRef(false);
-  const messagesBottomRef = useRef(null);
-
-  const [state, setState] = useState(initialState);
+export default function PlaycraftApp() {
+  const [store, setStore] = useState(defaultStore);
   const [input, setInput] = useState("");
-  const [mode, setMode] = useState("chat");
   const [attachments, setAttachments] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadingLabel, setLoadingLabel] = useState("Thinking…");
+  const [dragging, setDragging] = useState(false);
   const [plusOpen, setPlusOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [selectedProjectId, setSelectedProjectId] = useState(null);
-  const [dragging, setDragging] = useState(false);
+  const [projectMenuId, setProjectMenuId] = useState(null);
+  const [chatMenuId, setChatMenuId] = useState(null);
+  const [versionsFor, setVersionsFor] = useState(null);
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(false);
+
+  const fileInputRef = useRef(null);
+  const inputRef = useRef(null);
+  const messagesRef = useRef(null);
+  const plusRef = useRef(null);
+  const plusButtonRef = useRef(null);
+  const modeRef = useRef(null);
+  const modeButtonRef = useRef(null);
+  const controllerRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const shouldStickBottomRef = useRef(true);
+  const typingIntervalRef = useRef(null);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setState(parsed);
-        const active = parsed.chats.find((c) => c.id === parsed.activeChatId);
-        if (active?.mode) setMode(active.mode);
-      } else {
-        const starter = createChat();
-        setState({ ...initialState, chats: [starter], activeChatId: starter.id });
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const parsed = raw ? safeJsonParse(raw) : null;
+    if (parsed?.chats?.length) setStore(parsed);
+    setSpeechSupported(Boolean(window.SpeechRecognition || window.webkitSpeechRecognition));
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    applyTheme(store.theme, store.accent);
+  }, [store]);
+
+  useOutsideClick([plusRef, plusButtonRef], () => setPlusOpen(false));
+  useOutsideClick([modeRef, modeButtonRef], () => setModeOpen(false));
+
+  const activeChat = useMemo(() => store.chats.find((c) => c.id === store.activeChatId) || store.chats[0], [store]);
+  const activeProject = useMemo(() => store.projects.find((p) => p.id === activeChat?.projectId) || null, [store, activeChat]);
+  const activeMode = activeChat?.mode || "chat";
+  const modeMeta = MODE_OPTIONS.find((m) => m.id === activeMode) || MODE_OPTIONS[0];
+
+  const filteredStandaloneChats = useMemo(() => {
+    const q = store.search.trim().toLowerCase();
+    const chats = sortPinned(store.chats.filter((c) => !c.projectId));
+    if (!q) return chats;
+    return chats.filter((chat) => {
+      const hay = `${chat.title} ${chat.summary} ${chat.messages.map((m) => m.text || "").join(" ")}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [store]);
+
+  const filteredProjects = useMemo(() => {
+    const q = store.search.trim().toLowerCase();
+    const projects = sortPinned(store.projects);
+    if (!q) return projects;
+    return projects.filter((project) => {
+      const related = store.chats.filter((c) => c.projectId === project.id);
+      const hay = `${project.name} ${project.memory} ${related.map((c) => `${c.title} ${c.summary} ${c.messages.map((m) => m.text || "").join(" ")}`).join(" ")}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [store]);
+
+  const chatsByProject = useMemo(() => {
+    const map = {};
+    store.projects.forEach((p) => { map[p.id] = []; });
+    store.chats.forEach((chat) => {
+      if (chat.projectId) {
+        if (!map[chat.projectId]) map[chat.projectId] = [];
+        map[chat.projectId].push(chat);
       }
-    } catch {
-      const starter = createChat();
-      setState({ ...initialState, chats: [starter], activeChatId: starter.id });
-    } finally {
-      hydrated.current = true;
-    }
+    });
+    Object.keys(map).forEach((k) => { map[k] = sortPinned(map[k]); });
+    return map;
+  }, [store]);
+
+  useEffect(() => {
+    clearInterval(typingIntervalRef.current);
+    typingIntervalRef.current = setInterval(() => {
+      setStore((prev) => {
+        let changed = false;
+        const chats = prev.chats.map((chat) => {
+          const messages = chat.messages.map((msg) => {
+            if (!msg.animating || !msg.fullText) return msg;
+            const current = msg.text || "";
+            if (current.length >= msg.fullText.length) return { ...msg, animating: false };
+            changed = true;
+            const remaining = msg.fullText.slice(current.length);
+            const chunk = remaining.match(/^.{1,8}(\s|$)/)?.[0] || remaining.slice(0, 10);
+            return { ...msg, text: current + chunk, animating: current.length + chunk.length < msg.fullText.length };
+          });
+          return { ...chat, messages };
+        });
+        return changed ? { ...prev, chats } : prev;
+      });
+      if (shouldStickBottomRef.current) {
+        messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" });
+      }
+    }, 45);
+    return () => clearInterval(typingIntervalRef.current);
   }, []);
 
-  useEffect(() => {
-    if (!hydrated.current) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
-
-  useEffect(() => {
-    const onDown = (e) => {
-      if (plusMenuRef.current && !plusMenuRef.current.contains(e.target)) setPlusOpen(false);
-      if (modeMenuRef.current && !modeMenuRef.current.contains(e.target)) setModeOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+  const updateChat = useCallback((chatId, updater) => {
+    setStore((prev) => ({
+      ...prev,
+      chats: prev.chats.map((chat) => (chat.id === chatId ? updater(chat) : chat)),
+    }));
   }, []);
 
-  useEffect(() => {
-    messagesBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [state.activeChatId, state.chats]);
+  const updateProject = useCallback((projectId, updater) => {
+    setStore((prev) => ({
+      ...prev,
+      projects: prev.projects.map((project) => (project.id === projectId ? updater(project) : project)),
+    }));
+  }, []);
 
-  const activeChat = useMemo(() => state.chats.find((c) => c.id === state.activeChatId) || null, [state]);
+  const addArtifactToProject = useCallback((projectId, artifact) => {
+    if (!projectId) return;
+    updateProject(projectId, (project) => {
+      const library = { ...(project.fileLibrary || {}) };
+      const existing = library[artifact.name] || [];
+      const version = existing.length + 1;
+      library[artifact.name] = [...existing, { ...artifact, version, savedAt: nowIso() }];
+      return { ...project, fileLibrary: library, updatedAt: nowIso() };
+    });
+  }, [updateProject]);
 
-  useEffect(() => {
-    if (activeChat?.mode) setMode(activeChat.mode);
-  }, [activeChat?.id]);
-
-  const chats = useMemo(() => state.chats.filter((c) => !c.projectId), [state.chats]);
-  const projects = state.projects;
-
-  const toggleTheme = () => {
-    setState((prev) => ({ ...prev, theme: prev.theme === "light" ? "dark" : "light" }));
+  const setActiveChat = (chatId) => {
+    setStore((prev) => ({ ...prev, activeChatId: chatId }));
+    setProjectMenuId(null);
+    setChatMenuId(null);
   };
 
-  const createNewChat = (projectId = null, presetMode = "chat") => {
-    const chat = createChat({ projectId, mode: presetMode });
-    setState((prev) => ({
+  const createStandaloneChat = useCallback(() => {
+    const chat = createChat({ title: "New chat" });
+    setStore((prev) => ({ ...prev, chats: [chat, ...prev.chats], activeChatId: chat.id }));
+  }, []);
+
+  const createProjectWithChat = useCallback(() => {
+    const name = window.prompt("Project name", "My project");
+    if (!name) return;
+    const project = createProject(name.trim());
+    const chat = createChat({ title: `${name.trim()} chat`, projectId: project.id, mode: "build" });
+    setStore((prev) => ({
       ...prev,
+      projects: [project, ...prev.projects],
       chats: [chat, ...prev.chats],
       activeChatId: chat.id,
     }));
-    setSelectedProjectId(projectId);
-    setMode(presetMode);
-    setInput("");
-    setAttachments([]);
-    setPlusOpen(false);
+  }, []);
+
+  const createChatInProject = useCallback((projectId) => {
+    const project = store.projects.find((p) => p.id === projectId);
+    const chat = createChat({ title: project ? `${project.name} chat` : "New chat", projectId, mode: "build" });
+    setStore((prev) => ({ ...prev, chats: [chat, ...prev.chats], activeChatId: chat.id }));
+  }, [store.projects]);
+
+  const renameChat = useCallback((chatId) => {
+    const chat = store.chats.find((c) => c.id === chatId);
+    const next = window.prompt("Rename chat", chat?.title || "");
+    if (!next) return;
+    updateChat(chatId, (c) => ({ ...c, title: next.trim(), updatedAt: nowIso() }));
+  }, [store.chats, updateChat]);
+
+  const renameProject = useCallback((projectId) => {
+    const project = store.projects.find((p) => p.id === projectId);
+    const next = window.prompt("Rename project", project?.name || "");
+    if (!next) return;
+    updateProject(projectId, (p) => ({ ...p, name: next.trim(), updatedAt: nowIso() }));
+  }, [store.projects, updateProject]);
+
+  const editProjectMemory = useCallback((projectId) => {
+    const project = store.projects.find((p) => p.id === projectId);
+    const next = window.prompt("Project memory / style notes", project?.memory || "");
+    if (next == null) return;
+    updateProject(projectId, (p) => ({ ...p, memory: next, updatedAt: nowIso() }));
+  }, [store.projects, updateProject]);
+
+  const deleteChat = useCallback((chatId) => {
+    if (!window.confirm("Delete this chat?")) return;
+    setStore((prev) => {
+      const chats = prev.chats.filter((c) => c.id !== chatId);
+      const nextActive = prev.activeChatId === chatId ? chats[0]?.id || createChat().id : prev.activeChatId;
+      return chats.length
+        ? { ...prev, chats, activeChatId: nextActive }
+        : { ...defaultStore() };
+    });
+  }, []);
+
+  const deleteProject = useCallback((projectId) => {
+    if (!window.confirm("Delete this project and all its chats?")) return;
+    setStore((prev) => {
+      const chats = prev.chats.filter((c) => c.projectId !== projectId);
+      const projects = prev.projects.filter((p) => p.id !== projectId);
+      let activeChatId = prev.activeChatId;
+      if (!chats.find((c) => c.id === activeChatId)) {
+        activeChatId = chats[0]?.id;
+      }
+      if (!activeChatId) {
+        const chat = createChat();
+        return { ...prev, projects, chats: [chat, ...chats], activeChatId: chat.id };
+      }
+      return { ...prev, projects, chats, activeChatId };
+    });
+  }, []);
+
+  const togglePinChat = (chatId) => updateChat(chatId, (c) => ({ ...c, pinned: !c.pinned, updatedAt: nowIso() }));
+  const togglePinProject = (projectId) => updateProject(projectId, (p) => ({ ...p, pinned: !p.pinned, updatedAt: nowIso() }));
+
+  const setChatMode = (chatId, mode) => {
+    updateChat(chatId, (chat) => ({ ...chat, mode, updatedAt: nowIso() }));
     setModeOpen(false);
   };
 
-  const addProject = () => {
-    const name = window.prompt("Project name")?.trim();
-    if (!name) return;
-    const project = { id: uid(), name, createdAt: nowIso() };
-    setState((prev) => ({ ...prev, projects: [project, ...prev.projects] }));
-    setSelectedProjectId(project.id);
-    setPlusOpen(false);
+  const setStudyMode = (chatId, studyMode) => updateChat(chatId, (chat) => ({ ...chat, studyMode, updatedAt: nowIso() }));
+
+  const setProjectStyle = (projectId, stylePreset) => updateProject(projectId, (p) => ({ ...p, stylePreset, updatedAt: nowIso() }));
+
+  const handleFiles = async (list) => {
+    if (!list?.length) return;
+    const normalized = await normalizeFiles(list);
+    setAttachments((prev) => [...prev, ...normalized]);
   };
 
-  const deleteProject = (projectId) => {
-    const ok = window.confirm("Delete this project and its chats?");
-    if (!ok) return;
-    setState((prev) => {
-      const remainingChats = prev.chats.filter((c) => c.projectId !== projectId);
-      const stillActive = remainingChats.find((c) => c.id === prev.activeChatId);
-      let activeChatId = prev.activeChatId;
-      if (!stillActive) activeChatId = remainingChats[0]?.id || null;
-      if (!activeChatId) {
-        const starter = createChat();
-        return {
-          ...prev,
-          projects: prev.projects.filter((p) => p.id !== projectId),
-          chats: [starter, ...remainingChats],
-          activeChatId: starter.id,
-        };
+  const onDrop = async (event) => {
+    event.preventDefault();
+    setDragging(false);
+    await handleFiles(event.dataTransfer.files);
+  };
+
+  const onScrollMessages = () => {
+    const el = messagesRef.current;
+    if (!el) return;
+    shouldStickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 70;
+  };
+
+  const startSpeech = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR || voiceActive) return;
+    const recognition = new SR();
+    recognition.lang = /[א-ת]/.test(input) ? "he-IL" : "en-US";
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    let finalText = "";
+    recognition.onstart = () => setVoiceActive(true);
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        transcript += event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalText += event.results[i][0].transcript;
       }
-      return {
-        ...prev,
-        projects: prev.projects.filter((p) => p.id !== projectId),
-        chats: remainingChats,
-        activeChatId,
-      };
-    });
-    if (selectedProjectId === projectId) setSelectedProjectId(null);
-  };
-
-  const deleteChat = (chatId) => {
-    setState((prev) => {
-      const remaining = prev.chats.filter((c) => c.id !== chatId);
-      let activeChatId = prev.activeChatId;
-      if (prev.activeChatId === chatId) activeChatId = remaining[0]?.id || null;
-      if (!activeChatId) {
-        const starter = createChat();
-        return { ...prev, chats: [starter, ...remaining], activeChatId: starter.id };
+      setInput((prev) => `${prev} ${transcript}`.trim());
+    };
+    recognition.onend = () => {
+      setVoiceActive(false);
+      if (finalText.trim()) {
+        setInput((prev) => prev.trim());
       }
-      return { ...prev, chats: remaining, activeChatId };
-    });
+    };
+    recognition.onerror = () => setVoiceActive(false);
+    recognitionRef.current = recognition;
+    recognition.start();
   };
 
-  const selectChat = (chatId) => {
-    const chat = state.chats.find((c) => c.id === chatId);
-    if (!chat) return;
-    setState((prev) => ({ ...prev, activeChatId: chatId }));
-    setMode(chat.mode || "chat");
-    setSelectedProjectId(chat.projectId || null);
+  const stopSpeech = () => {
+    recognitionRef.current?.stop?.();
+    setVoiceActive(false);
   };
 
-  const setChatMode = (nextMode) => {
-    setMode(nextMode);
-    setState((prev) => ({
-      ...prev,
-      chats: prev.chats.map((c) => (c.id === prev.activeChatId ? { ...c, mode: nextMode } : c)),
-    }));
-    setModeOpen(false);
+  const stopNetwork = () => {
+    controllerRef.current?.abort?.();
+    setLoading(false);
+    setLoadingLabel("Stopped");
   };
 
-  const applyTyping = async (fullText, update) => {
-    const finalText = fullText || "";
-    let current = "";
-    for (const ch of finalText) {
-      current += ch;
-      update(current);
-      await new Promise((r) => setTimeout(r, finalText.length > 1600 ? 2 : 8));
+  const openArtifact = (artifact) => {
+    if (artifact.url && /^https?:/i.test(artifact.url)) {
+      window.open(artifact.url, "_blank", "noopener,noreferrer");
+      return;
     }
+    if (artifact.content) {
+      const blob = new Blob([artifact.content], { type: artifact.mime || "text/html" });
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      return;
+    }
+    if (artifact.dataUrl) window.open(artifact.dataUrl, "_blank", "noopener,noreferrer");
   };
 
-  const send = async () => {
-    if (loading || !activeChat) return;
-    const text = input.trim();
-    if (!text && attachments.length === 0) return;
+  const downloadArtifact = (artifact) => {
+    const link = document.createElement("a");
+    link.download = artifact.name || "download";
+    if (artifact.dataUrl) {
+      link.href = artifact.dataUrl;
+    } else if (artifact.url && /^https?:/i.test(artifact.url)) {
+      link.href = artifact.url;
+      link.target = "_blank";
+    } else {
+      const blob = new Blob([artifact.content || ""], { type: artifact.mime || "text/plain" });
+      link.href = URL.createObjectURL(blob);
+      setTimeout(() => URL.revokeObjectURL(link.href), 30000);
+    }
+    link.click();
+  };
+
+  const selectArtifactPreview = (artifact) => {
+    if (!activeChat) return;
+    updateChat(activeChat.id, (chat) => ({ ...chat, previewArtifactId: artifact.id, updatedAt: nowIso() }));
+    setStore((prev) => ({ ...prev, splitView: true }));
+  };
+
+  const speakText = (text) => {
+    if (!("speechSynthesis" in window) || !text) return;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = /[א-ת]/.test(text) ? "he-IL" : "en-US";
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const send = async (overrideText = null) => {
+    const text = (overrideText ?? input).trim();
+    if (!text && !attachments.length) return;
+    if (!activeChat) return;
 
     const userMessage = {
       id: uid(),
       role: "user",
-      content: text,
-      files: attachments,
+      text,
       createdAt: nowIso(),
+      timeLabel: nowLabel(),
+      attachments: [...attachments],
     };
-
-    const assistantId = uid();
-    const assistantMessage = {
-      id: assistantId,
+    const pendingId = uid();
+    const pendingMessage = {
+      id: pendingId,
       role: "assistant",
-      content: "",
-      pending: true,
+      text: "",
+      fullText: "",
       createdAt: nowIso(),
-      files: [],
-      imageUrl: "",
+      timeLabel: nowLabel(),
+      pending: true,
+      animating: false,
+      artifacts: [],
+      images: [],
+      status: inferWorkingLabel(activeChat.mode),
     };
 
-    const outgoingChat = activeChat;
-    const nextMessages = [...outgoingChat.messages, userMessage, assistantMessage];
-
-    setState((prev) => ({
-      ...prev,
-      chats: prev.chats.map((c) => (c.id === outgoingChat.id ? { ...c, messages: nextMessages, updatedAt: nowIso() } : c)),
-    }));
-
-    setLoading(true);
     setInput("");
     setAttachments([]);
+    setLoading(true);
+    setLoadingLabel(inferWorkingLabel(activeChat.mode));
+    controllerRef.current = new AbortController();
+
+    updateChat(activeChat.id, (chat) => ({
+      ...chat,
+      messages: [...chat.messages, userMessage, pendingMessage],
+      updatedAt: nowIso(),
+    }));
+
+    shouldStickBottomRef.current = true;
+    setTimeout(() => messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" }), 20);
+
+    const activeProjectNow = store.projects.find((p) => p.id === activeChat.projectId) || null;
 
     try {
-      const resp = await fetch("/api/playcraft", {
+      const resp = await fetch("/api/playcraft/route", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          mode,
-          messages: outgoingChat.messages
-            .filter((m) => !m.pending)
-            .concat(userMessage)
-            .map((m) => ({
-              role: m.role,
-              text: m.content,
-              mode,
-              files: (m.files || []).map((f) => ({
-                kind: f.kind,
-                mime: f.mime,
-                base64: f.base64,
-                text: f.text,
-                name: f.name,
-                truncated: f.truncated,
-              })),
-            })),
+          messages: [...activeChat.messages, userMessage].map((m) => ({ role: m.role, text: m.text, attachments: m.attachments || [], artifacts: m.artifacts || [] })),
+          mode: activeChat.mode,
+          studyMode: activeChat.studyMode,
+          project: activeProjectNow
+            ? {
+                name: activeProjectNow.name,
+                memory: activeProjectNow.memory,
+                stylePreset: activeProjectNow.stylePreset,
+                files: Object.keys(activeProjectNow.fileLibrary || {}),
+              }
+            : null,
         }),
+        signal: controllerRef.current.signal,
       });
-
       const data = await resp.json();
-      const replyText = data?.text || data?.error || "Something went wrong.";
-      const replyFiles = data?.files || [];
-      const imageUrl = data?.imageUrl || "";
+      if (!resp.ok) throw new Error(data?.error || `Request failed (${resp.status})`);
 
-      await applyTyping(replyText, (partial) => {
-        setState((prev) => ({
-          ...prev,
-          chats: prev.chats.map((c) => {
-            if (c.id !== outgoingChat.id) return c;
-            const updatedMessages = c.messages.map((m) =>
-              m.id === assistantId ? { ...m, content: partial, pending: true } : m
-            );
-            return { ...c, messages: updatedMessages };
-          }),
-        }));
+      const artifacts = (data.artifacts || []).map((artifact) => ({ ...artifact, id: artifact.id || uid() }));
+      const images = (data.images || []).map((img) => ({ ...img, id: img.id || uid() }));
+      const finalText = data.reply || "Done.";
+      const titleHint = data.titleHint || summarizeChatTitle([...activeChat.messages, userMessage, { role: "assistant", text: finalText }]);
+
+      setStore((prev) => {
+        const chats = prev.chats.map((chat) => {
+          if (chat.id !== activeChat.id) return chat;
+          const messages = chat.messages.map((msg) =>
+            msg.id === pendingId
+              ? {
+                  ...msg,
+                  pending: false,
+                  status: "Done",
+                  fullText: finalText,
+                  text: "",
+                  animating: true,
+                  artifacts,
+                  images,
+                }
+              : msg
+          );
+          return {
+            ...chat,
+            title: titleHint || chat.title,
+            summary: finalText.slice(0, 180),
+            messages,
+            updatedAt: nowIso(),
+            previewArtifactId: chat.previewArtifactId || artifacts[0]?.id || images[0]?.id || null,
+          };
+        });
+        const projects = prev.projects.map((project) =>
+          project.id === activeChat.projectId ? { ...project, updatedAt: nowIso() } : project
+        );
+        return { ...prev, chats, projects };
       });
 
-      setState((prev) => ({
-        ...prev,
-        chats: prev.chats.map((c) => {
-          if (c.id !== outgoingChat.id) return c;
-          const updatedMessages = c.messages.map((m) =>
-            m.id === assistantId ? { ...m, content: replyText, pending: false, files: replyFiles, imageUrl } : m
-          );
-          const title = summarizeChat(updatedMessages);
-          return { ...c, messages: updatedMessages, updatedAt: nowIso(), title };
-        }),
-      }));
-    } catch (err) {
-      const msg = `⚠️ ${err?.message || "Request failed"}`;
-      setState((prev) => ({
-        ...prev,
-        chats: prev.chats.map((c) => {
-          if (c.id !== outgoingChat.id) return c;
-          const updatedMessages = c.messages.map((m) =>
-            m.id === assistantId ? { ...m, content: msg, pending: false } : m
-          );
-          return { ...c, messages: updatedMessages, updatedAt: nowIso() };
-        }),
+      artifacts.forEach((artifact) => addArtifactToProject(activeChat.projectId, artifact));
+      images.forEach((image) => addArtifactToProject(activeChat.projectId, { ...image, kind: "image", mime: "image/png" }));
+
+      if (store.voiceReply && finalText) speakText(finalText);
+    } catch (error) {
+      const message = error?.name === "AbortError" ? "Stopped." : `⚠️ ${error.message}`;
+      updateChat(activeChat.id, (chat) => ({
+        ...chat,
+        messages: chat.messages.map((msg) =>
+          msg.id === pendingId ? { ...msg, pending: false, text: message, fullText: message, status: "Error", animating: false } : msg
+        ),
       }));
     } finally {
       setLoading(false);
+      controllerRef.current = null;
     }
   };
 
-  const toggleVoice = () => {
-    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRec) {
-      alert("Voice input is not supported in this browser.");
-      return;
-    }
-
-    if (recording && recognitionRef.current) {
-      recognitionRef.current.stop();
-      return;
-    }
-
-    const rec = new SpeechRec();
-    recognitionRef.current = rec;
-    rec.lang = /[\u0590-\u05FF]/.test(input) ? "he-IL" : "he-IL";
-    rec.interimResults = true;
-    rec.continuous = false;
-    autoSendAfterVoiceRef.current = !input.trim();
-
-    rec.onstart = () => setRecording(true);
-    rec.onend = () => {
-      setRecording(false);
-      if (autoSendAfterVoiceRef.current && inputRef.current?.value?.trim()) {
-        setTimeout(() => send(), 150);
+  useEffect(() => {
+    const onKey = (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        document.getElementById("playcraft-search")?.focus();
+      }
+      if (event.altKey && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        createStandaloneChat();
+      }
+      if (event.altKey && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        createProjectWithChat();
       }
     };
-    rec.onerror = () => setRecording(false);
-    rec.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map((r) => r[0]?.transcript || "")
-        .join(" ");
-      setInput(transcript.trim());
-      if (inputRef.current) inputRef.current.value = transcript.trim();
-    };
-    rec.start();
-  };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [createProjectWithChat, createStandaloneChat]);
 
-  const onDrop = async (e) => {
-    e.preventDefault();
-    setDragging(false);
-    const files = await filesToPayload(e.dataTransfer.files);
-    setAttachments((prev) => [...prev, ...files]);
-  };
+  const selectedPreviewArtifact = useMemo(() => {
+    if (!activeChat) return null;
+    const allArtifacts = activeChat.messages.flatMap((m) => [...(m.artifacts || []), ...(m.images || [])]);
+    return allArtifacts.find((item) => item.id === activeChat.previewArtifactId) || allArtifacts[0] || null;
+  }, [activeChat]);
 
-  const addFiles = async (fileList) => {
-    const files = await filesToPayload(fileList);
-    setAttachments((prev) => [...prev, ...files]);
-    setPlusOpen(false);
-  };
-
-  const themeClass = state.theme === "dark" ? "pc-dark" : "pc-light";
+  const versionsItems = useMemo(() => {
+    if (!versionsFor || !activeProject) return [];
+    return activeProject.fileLibrary?.[versionsFor.name] || [];
+  }, [versionsFor, activeProject]);
 
   return (
-    <div className={`pc-app ${themeClass}`} onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={onDrop}>
+    <div
+      onDragEnter={(e) => { e.preventDefault(); setDragging(true); }}
+      onDragOver={(e) => e.preventDefault()}
+      onDragLeave={(e) => { e.preventDefault(); if (e.target === e.currentTarget) setDragging(false); }}
+      onDrop={onDrop}
+      style={{
+        height: "100vh",
+        display: "grid",
+        gridTemplateColumns: store.splitView ? "310px minmax(0, 1fr) 420px" : "310px minmax(0, 1fr)",
+        background: "linear-gradient(180deg, var(--bg), color-mix(in srgb, var(--bg) 85%, white))",
+        color: "var(--text)",
+        overflow: "hidden",
+      }}
+    >
       <style>{`
-        :root{--bg:#eef4ff;--bg2:#fff7ee;--panel:#ffffffd8;--panel-2:#ffffff;--text:#223055;--muted:#7180a0;--border:#d8def1;--accent:#7c5cff;--accent-2:#ffb770;--shadow:0 20px 50px rgba(75,95,160,.12);--bubble-user:#7c5cff;--bubble-user-text:#fff;--bubble-ai:#ffffff;--bubble-ai-text:#203157;--soft:#eef0ff}
-        .pc-dark{--bg:#111320;--bg2:#15192b;--panel:#171c2be0;--panel-2:#1a2133;--text:#f4f7ff;--muted:#a6b1cc;--border:#2b3349;--accent:#8b72ff;--accent-2:#f7b46a;--shadow:0 20px 50px rgba(0,0,0,.35);--bubble-user:#8b72ff;--bubble-user-text:#fff;--bubble-ai:#1b2235;--bubble-ai-text:#f1f5ff;--soft:#232c45}
-        *{box-sizing:border-box} body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;background:linear-gradient(135deg,var(--bg2),var(--bg));color:var(--text)}
-        .pc-app{height:100vh;display:flex;background:linear-gradient(135deg,var(--bg2),var(--bg));color:var(--text)}
-        .pc-sidebar{width:335px;border-right:1px solid var(--border);padding:18px;display:flex;flex-direction:column;gap:16px;background:rgba(255,255,255,.28);backdrop-filter:blur(14px)}
-        .pc-dark .pc-sidebar{background:rgba(17,19,32,.6)}
-        .pc-brand{display:flex;align-items:center;justify-content:space-between;gap:12px}
-        .pc-brand h1{margin:0;font-size:26px;line-height:1}.pc-brand p{margin:4px 0 0;color:var(--muted);font-size:14px}
-        .pc-logo{width:52px;height:52px;border-radius:18px;background:linear-gradient(135deg,var(--accent-2),#ffe39b);display:grid;place-items:center;box-shadow:var(--shadow);font-size:22px}
-        .pc-icon-btn,.pc-action,.pc-theme-btn,.pc-send,.pc-mic,.pc-plus,.pc-menu button,.pc-card button,.pc-delete{border:none;cursor:pointer}
-        .pc-action{display:flex;align-items:center;gap:10px;padding:14px 16px;border-radius:20px;font-weight:800;font-size:18px;box-shadow:var(--shadow);transition:.18s transform,.18s opacity}
-        .pc-action:hover,.pc-card:hover{transform:translateY(-1px)}
-        .pc-primary{background:linear-gradient(135deg,var(--accent),#9c7dff);color:#fff}.pc-secondary{background:var(--panel);color:var(--text);border:1px solid var(--border)}
-        .pc-card{background:var(--panel);border:1px solid var(--border);padding:16px;border-radius:24px;display:flex;gap:12px;align-items:flex-start;box-shadow:var(--shadow);cursor:pointer}
-        .pc-card-icon{width:40px;height:40px;border-radius:14px;display:grid;place-items:center;background:linear-gradient(135deg,#ffe0b2,var(--accent-2));color:#6a4100;flex:none}
-        .pc-card strong{display:block;font-size:18px}.pc-card span{display:block;color:var(--muted);font-size:14px;margin-top:4px}
-        .pc-section-title{display:flex;align-items:center;gap:8px;color:var(--muted);font-weight:900;letter-spacing:.08em;text-transform:uppercase;font-size:12px;margin-top:4px}
-        .pc-list{display:flex;flex-direction:column;gap:10px;min-height:0}
-        .pc-item,.pc-project-head{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:18px;border:1px solid transparent;background:transparent;color:var(--text)}
-        .pc-item:hover,.pc-project-head:hover{background:var(--panel)}
-        .pc-item.active{background:linear-gradient(135deg,rgba(124,92,255,.14),rgba(255,183,112,.18));border-color:rgba(124,92,255,.22)}
-        .pc-item-main{display:flex;align-items:center;gap:10px;flex:1;min-width:0}.pc-item-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:700}
-        .pc-item-sub{color:var(--muted);font-size:12px}
-        .pc-delete{background:transparent;color:var(--muted);width:28px;height:28px;border-radius:10px;display:grid;place-items:center}
-        .pc-delete:hover{background:rgba(255,95,95,.12);color:#e05f5f}
-        .pc-project-body{padding-inline-start:12px;display:flex;flex-direction:column;gap:8px;margin-top:8px}
-        .pc-project-empty{padding:14px;border:1px dashed var(--border);border-radius:18px;color:var(--muted);font-size:14px}
-        .pc-main{flex:1;display:flex;flex-direction:column;min-width:0}
-        .pc-header{height:72px;padding:18px 26px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,.14);backdrop-filter:blur(10px)}
-        .pc-dark .pc-header{background:rgba(17,19,32,.35)}
-        .pc-header h2{margin:0;font-size:28px}.pc-header small{display:block;color:var(--muted);margin-top:4px}
-        .pc-theme-btn{width:42px;height:42px;border-radius:14px;background:var(--panel);color:var(--text);border:1px solid var(--border);display:grid;place-items:center;box-shadow:var(--shadow)}
-        .pc-messages{flex:1;overflow:auto;padding:28px 30px 180px}
-        .pc-thread{max-width:1020px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
-        .pc-msg{display:flex;gap:14px}.pc-msg.user{justify-content:flex-end}.pc-avatar{width:52px;height:52px;border-radius:20px;display:grid;place-items:center;background:var(--panel);border:1px solid var(--border);box-shadow:var(--shadow);font-weight:900;flex:none}
-        .pc-msg.user .pc-avatar{order:2;background:linear-gradient(135deg,var(--accent),#9c7dff);color:#fff;border:none}
-        .pc-bubble{max-width:min(78vw,840px);padding:20px 22px;border-radius:28px;background:var(--bubble-ai);color:var(--bubble-ai-text);box-shadow:var(--shadow);border:1px solid var(--border)}
-        .pc-msg.user .pc-bubble{background:linear-gradient(135deg,var(--bubble-user),#9a79ff);color:var(--bubble-user-text);border:none}
-        .pc-body{display:flex;flex-direction:column;gap:14px}.pc-rich p,.pc-rich li{margin:0;font-size:18px;line-height:1.7}.pc-rich h1,.pc-rich h2,.pc-rich h3{margin:0 0 6px;font-size:20px}
-        .pc-rich ul{margin:0;padding-inline-start:22px;display:flex;flex-direction:column;gap:8px}.pc-gap{height:4px}
-        .pc-code-wrap{background:rgba(17,24,39,.96);border-radius:18px;overflow:hidden;border:1px solid rgba(255,255,255,.08)}
-        .pc-code-top{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;color:#dce4ff;background:rgba(255,255,255,.06);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
-        .pc-code-top button{background:rgba(255,255,255,.12);color:#fff;border:none;border-radius:10px;padding:6px 10px;cursor:pointer}
-        .pc-code{margin:0;padding:16px;overflow:auto;max-height:360px;color:#f7f7fb;font-size:14px;line-height:1.6}
-        .pc-files{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}.pc-file-card{min-width:220px;max-width:100%;background:var(--panel-2);border:1px solid var(--border);padding:14px;border-radius:20px;box-shadow:var(--shadow)}
-        .pc-file-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.pc-file-name{display:flex;align-items:center;gap:8px;font-weight:800}
-        .pc-file-actions{display:flex;gap:10px;margin-top:12px}.pc-file-actions button,.pc-file-actions a{background:linear-gradient(135deg,var(--accent),#9b7cff);color:#fff;border:none;border-radius:12px;padding:10px 14px;text-decoration:none;font-weight:800}
-        .pc-inline-img{max-width:min(100%,560px);border-radius:20px;border:1px solid var(--border);box-shadow:var(--shadow);display:block;margin-top:12px}
-        .pc-composer-wrap{position:sticky;bottom:0;padding:18px 26px 22px;background:linear-gradient(180deg,transparent,rgba(255,255,255,.7) 18%,rgba(255,255,255,.88));backdrop-filter:blur(10px)}
-        .pc-dark .pc-composer-wrap{background:linear-gradient(180deg,transparent,rgba(17,19,32,.78) 18%,rgba(17,19,32,.94))}
-        .pc-composer{max-width:1040px;margin:0 auto;background:var(--panel);border:1px solid var(--border);box-shadow:var(--shadow);border-radius:34px;padding:16px;display:flex;align-items:flex-end;gap:14px;position:relative}
-        .pc-plus,.pc-mic,.pc-send,.pc-mode-switch{flex:none}.pc-plus,.pc-mic,.pc-send{width:66px;height:66px;border-radius:24px;display:grid;place-items:center}
-        .pc-plus{background:linear-gradient(135deg,#ffb26b,#ffcf96);color:#4d2d00}
-        .pc-mic{background:var(--soft);color:var(--text);border:1px solid var(--border)}
-        .pc-mic.recording{background:linear-gradient(135deg,#ff7b7b,#ffb3b3);color:#fff;border:none}
-        .pc-send{background:linear-gradient(135deg,var(--accent),#9b7cff);color:#fff}
-        .pc-input-col{flex:1;display:flex;flex-direction:column;gap:10px;min-width:0}
-        .pc-textarea{width:100%;min-height:84px;max-height:220px;resize:none;border:none;outline:none;background:transparent;color:var(--text);font-size:22px;line-height:1.5;padding:6px 2px}
-        .pc-textarea::placeholder{color:var(--muted)}
-        .pc-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-        .pc-mode-switch{border:none;background:var(--soft);color:var(--text);border-radius:18px;padding:12px 16px;display:flex;align-items:center;gap:10px;font-weight:900;cursor:pointer;border:1px solid var(--border)}
-        .pc-mode-badge{display:inline-flex;align-items:center;gap:8px}
-        .pc-attach-row{display:flex;gap:8px;flex-wrap:wrap}.pc-chip{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:var(--soft);border:1px solid var(--border);font-size:13px}
-        .pc-chip button{background:transparent;border:none;color:var(--muted);cursor:pointer}
-        .pc-menu{position:absolute;bottom:90px;left:18px;min-width:240px;background:var(--panel-2);border:1px solid var(--border);box-shadow:var(--shadow);border-radius:22px;padding:8px;display:flex;flex-direction:column;gap:4px;z-index:20}
-        .pc-menu.right{left:auto;right:168px}.pc-menu button{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:16px;background:transparent;color:var(--text);text-align:left;font-weight:800}
-        .pc-menu button:hover{background:var(--soft)}
-        .pc-drop{position:fixed;inset:0;background:rgba(124,92,255,.12);display:grid;place-items:center;z-index:30;pointer-events:none}.pc-drop-card{background:var(--panel-2);padding:28px 34px;border-radius:28px;border:2px dashed var(--accent);box-shadow:var(--shadow);font-weight:900;font-size:24px}
-        @media (max-width:1100px){.pc-sidebar{width:300px}.pc-textarea{font-size:18px}}
-        @media (max-width:900px){.pc-sidebar{display:none}.pc-messages{padding-inline:14px}.pc-composer-wrap{padding-inline:12px}.pc-header{padding-inline:14px}.pc-bubble{max-width:100%}.pc-plus,.pc-mic,.pc-send{width:58px;height:58px}}
+        :root { --accent: ${store.accent}; --accent-soft: ${store.accent}22; }
+        * { box-sizing: border-box; }
+        html, body { margin: 0; }
+        body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        button, input, textarea, select { font: inherit; }
+        .pc-btn { border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 14px; padding: 10px 12px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; transition: .18s ease; box-shadow: var(--shadow); }
+        .pc-btn:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+        .pc-btn.primary { background: var(--accent); color: white; border-color: transparent; box-shadow: 0 16px 30px color-mix(in srgb, var(--accent) 26%, transparent); }
+        .pc-btn.ghost { box-shadow: none; background: transparent; }
+        .pc-chip { border: 1px solid var(--border); background: var(--panel-2); color: var(--text); border-radius: 999px; padding: 8px 12px; display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+        .pc-chip:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+        .pc-card { background: var(--panel); border: 1px solid var(--border); border-radius: 22px; box-shadow: var(--shadow); }
+        .pc-item { border: 1px solid transparent; background: transparent; color: var(--text); border-radius: 16px; padding: 10px 12px; width: 100%; display: flex; align-items: center; gap: 10px; cursor: pointer; }
+        .pc-item:hover, .pc-item.active { background: var(--panel-3); border-color: var(--border); }
+        .pc-scroll::-webkit-scrollbar { width: 9px; height: 9px; }
+        .pc-scroll::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 16%, transparent); border-radius: 999px; }
+        .pc-statusdot { width: 8px; height: 8px; border-radius: 999px; background: var(--accent); box-shadow: 0 0 0 6px var(--accent-soft); animation: pulse 1.4s infinite; }
+        @keyframes pulse { 0% { transform: scale(.88); opacity: .85; } 70% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(.88); opacity: .85; } }
+        @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+        .pc-shimmer { background: linear-gradient(90deg, var(--panel-2) 25%, color-mix(in srgb, var(--panel-2) 70%, white) 50%, var(--panel-2) 75%); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
       `}</style>
 
-      {dragging && (
-        <div className="pc-drop"><div className="pc-drop-card">Drop files or screenshots here</div></div>
-      )}
-
-      <aside className="pc-sidebar">
-        <div className="pc-brand">
-          <div>
-            <h1>Playcraft</h1>
-            <p>smart chat, code, games, study, images</p>
+      {dragging ? (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(20, 28, 48, 0.18)", backdropFilter: "blur(6px)", zIndex: 100, display: "grid", placeItems: "center" }}>
+          <div className="pc-card" style={{ padding: 30, textAlign: "center", minWidth: 280 }}>
+            <div style={{ fontSize: 38, marginBottom: 10 }}>📎</div>
+            <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>Drop files here</div>
+            <div style={{ color: "var(--muted)" }}>Images, code, notes, screenshots — all good.</div>
           </div>
-          <div className="pc-logo">✨</div>
+        </div>
+      ) : null}
+
+      <aside className="pc-card pc-scroll" style={{ margin: 16, marginRight: 8, padding: 14, overflow: "auto", display: "grid", gridTemplateRows: "auto auto auto 1fr auto" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: 6 }}>
+          <div>
+            <div style={{ fontWeight: 900, fontSize: 22, letterSpacing: -0.4 }}>Playcraft</div>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>Build games, code, images, study</div>
+          </div>
+          <button className="pc-btn ghost" onClick={() => setStore((prev) => ({ ...prev, splitView: !prev.splitView }))}>Split</button>
         </div>
 
-        <button className="pc-action pc-primary" onClick={() => createNewChat(selectedProjectId, "chat")}><ChatIcon /> New chat</button>
-        <button className="pc-action pc-secondary" onClick={addProject}><FolderIcon /> Add project</button>
-
-        <div className="pc-card" onClick={() => setChatMode("image")}>
-          <div className="pc-card-icon"><ImageIcon /></div>
-          <div><strong>Create image</strong><span>Generate an image from a prompt</span></div>
+        <div style={{ display: "grid", gap: 10, padding: 6 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <button className="pc-btn" onClick={createStandaloneChat}><PlusIcon /> New chat</button>
+            <button className="pc-btn" onClick={createProjectWithChat}><SparkIcon /> Add project</button>
+          </div>
+          <div style={{ position: "relative" }}>
+            <SearchIcon />
+            <input
+              id="playcraft-search"
+              value={store.search}
+              onChange={(e) => setStore((prev) => ({ ...prev, search: e.target.value }))}
+              placeholder="Search chats, projects, files…"
+              style={{ width: "100%", padding: "12px 14px 12px 38px", borderRadius: 16, border: "1px solid var(--border)", background: "var(--panel-2)", color: "var(--text)", outline: "none" }}
+            />
+            <div style={{ position: "absolute", left: 12, top: 12, color: "var(--muted)" }}><SearchIcon /></div>
+          </div>
         </div>
-        <div className="pc-card" onClick={() => setChatMode("study")}>
-          <div className="pc-card-icon"><BookIcon /></div>
-          <div><strong>Study and learn</strong><span>Ask to learn any topic clearly</span></div>
-        </div>
 
-        <div className="pc-section-title"><ChatIcon /> <span>Chats</span></div>
-        <div className="pc-list" style={{ maxHeight: 250, overflow: "auto" }}>
-          {chats.map((chat) => (
-            <button key={chat.id} className={`pc-item ${chat.id === state.activeChatId ? "active" : ""}`} onClick={() => selectChat(chat.id)}>
-              <div className="pc-item-main">
-                <ChatIcon />
-                <div style={{ minWidth: 0 }}>
-                  <div className="pc-item-title">{chat.title || "New chat"}</div>
-                  <div className="pc-item-sub">{chat.mode || "chat"}</div>
-                </div>
+        <div style={{ display: "grid", gap: 10, padding: 6 }}>
+          <div className="pc-card" style={{ padding: 12, background: "var(--panel-2)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".08em" }}>Appearance</div>
+              <button className="pc-chip" onClick={() => setStore((prev) => ({ ...prev, voiceReply: !prev.voiceReply }))}>{store.voiceReply ? "🔊 Voice on" : "🔈 Voice off"}</button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+              <select value={store.theme} onChange={(e) => setStore((prev) => ({ ...prev, theme: e.target.value }))} style={{ padding: "10px 12px", borderRadius: 14, border: "1px solid var(--border)", background: "var(--panel)", color: "var(--text)" }}>
+                {Object.entries(THEMES).map(([id, theme]) => <option key={id} value={id}>{theme.name}</option>)}
+              </select>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: 8, borderRadius: 14, border: "1px solid var(--border)", background: "var(--panel)" }}>
+                {ACCENTS.map((color) => (
+                  <button key={color} onClick={() => setStore((prev) => ({ ...prev, accent: color }))} title={color} style={{ width: 18, height: 18, borderRadius: 999, border: color === store.accent ? "2px solid var(--text)" : "2px solid transparent", background: color, cursor: "pointer" }} />
+                ))}
               </div>
-              <span className="pc-delete" onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }}><TrashIcon /></span>
-            </button>
-          ))}
+            </div>
+          </div>
+          <div className="pc-card" style={{ padding: 12, background: "var(--panel-2)" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 10 }}>Quick actions</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <button className="pc-chip" onClick={() => activeChat && setChatMode(activeChat.id, "image")}>🖼️ Create image</button>
+              <button className="pc-chip" onClick={() => activeChat && setChatMode(activeChat.id, "study")}>📚 Study and learn</button>
+              <button className="pc-chip" onClick={() => activeChat && setChatMode(activeChat.id, "build")}>🛠️ Build</button>
+              <button className="pc-chip" onClick={() => activeChat && setChatMode(activeChat.id, "arduino")}>🔌 Arduino</button>
+            </div>
+          </div>
         </div>
 
-        <div className="pc-section-title"><FolderIcon /> <span>Projects</span></div>
-        <div className="pc-list" style={{ overflow: "auto" }}>
-          {projects.length === 0 ? (
-            <div className="pc-project-empty">No projects yet. Tap <b>Add project</b> when you want one.</div>
-          ) : projects.map((project) => {
-            const projectChats = state.chats.filter((c) => c.projectId === project.id);
-            const open = selectedProjectId === project.id;
-            return (
-              <div key={project.id}>
-                <div className="pc-project-head" onClick={() => setSelectedProjectId(open ? null : project.id)}>
-                  <div className="pc-item-main"><FolderIcon /><div className="pc-item-title">{project.name}</div></div>
-                  <button className="pc-delete" onClick={(e) => { e.stopPropagation(); createNewChat(project.id, "chat"); }}>+</button>
-                  <button className="pc-delete" onClick={(e) => { e.stopPropagation(); deleteProject(project.id); }}><TrashIcon /></button>
-                </div>
-                {open && (
-                  <div className="pc-project-body">
-                    {projectChats.length === 0 ? <div className="pc-project-empty">No chats yet in this project.</div> : projectChats.map((chat) => (
-                      <button key={chat.id} className={`pc-item ${chat.id === state.activeChatId ? "active" : ""}`} onClick={() => selectChat(chat.id)}>
-                        <div className="pc-item-main"><ChatIcon /><div className="pc-item-title">{chat.title || "New chat"}</div></div>
-                        <span className="pc-delete" onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }}><TrashIcon /></span>
+        <div style={{ display: "grid", gap: 12, padding: 6, minHeight: 0 }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".08em" }}>Projects</div>
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {filteredProjects.map((project) => (
+                <div key={project.id} className="pc-card" style={{ padding: 8, background: "var(--panel-2)", boxShadow: "none" }}>
+                  <div className={`pc-item ${activeProject?.id === project.id ? "active" : ""}`} style={{ padding: 10, alignItems: "flex-start" }}>
+                    <button onClick={() => {
+                      const firstChat = chatsByProject[project.id]?.[0];
+                      if (firstChat) setActiveChat(firstChat.id);
+                    }} style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "none", border: "none", color: "inherit", padding: 0, cursor: "pointer", flex: 1, textAlign: "left" }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 12, background: "var(--accent-soft)", display: "grid", placeItems: "center", fontSize: 14 }}>📁</div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>{project.name} {project.pinned ? <PinIcon filled /> : null}</div>
+                        <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>{project.memory ? project.memory.slice(0, 70) : `${chatsByProject[project.id]?.length || 0} chats • ${Object.keys(project.fileLibrary || {}).length} files`}</div>
+                      </div>
+                    </button>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button className="pc-chip" onClick={() => createChatInProject(project.id)}>+ Chat</button>
+                      <button className="pc-chip" onClick={() => setProjectMenuId(projectMenuId === project.id ? null : project.id)}>•••</button>
+                    </div>
+                  </div>
+                  {projectMenuId === project.id ? (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "6px 8px 10px 8px" }}>
+                      <button className="pc-chip" onClick={() => renameProject(project.id)}><RenameIcon /> Rename</button>
+                      <button className="pc-chip" onClick={() => togglePinProject(project.id)}><PinIcon filled={project.pinned} /> Pin</button>
+                      <button className="pc-chip" onClick={() => editProjectMemory(project.id)}>🧠 Memory</button>
+                      <select value={project.stylePreset} onChange={(e) => setProjectStyle(project.id, e.target.value)} style={{ padding: "8px 10px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--panel)", color: "var(--text)" }}>
+                        {STYLE_OPTIONS.map((style) => <option key={style} value={style}>{style}</option>)}
+                      </select>
+                      <button className="pc-chip" onClick={() => deleteProject(project.id)} style={{ color: "var(--danger)" }}><TrashIcon /> Delete</button>
+                    </div>
+                  ) : null}
+                  <div style={{ display: "grid", gap: 6, padding: "0 6px 6px 6px" }}>
+                    {(chatsByProject[project.id] || []).map((chat) => (
+                      <button key={chat.id} className={`pc-item ${activeChat?.id === chat.id ? "active" : ""}`} onClick={() => setActiveChat(chat.id)} style={{ padding: "8px 10px", fontSize: 13 }}>
+                        <span style={{ fontSize: 14 }}>💬</span>
+                        <span style={{ flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{chat.title}</span>
+                        {chat.pinned ? <PinIcon filled /> : null}
                       </button>
                     ))}
                   </div>
-                )}
-              </div>
-            );
-          })}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>Chats</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {filteredStandaloneChats.map((chat) => (
+                <div key={chat.id} className={`pc-item ${activeChat?.id === chat.id ? "active" : ""}`} onClick={() => setActiveChat(chat.id)} style={{ justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: 11, background: "var(--panel-3)", display: "grid", placeItems: "center" }}>💬</div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 170 }}>{chat.title}</div>
+                      <div style={{ fontSize: 12, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>{chat.summary || MODE_OPTIONS.find((m) => m.id === chat.mode)?.label}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 4 }} onClick={(e) => e.stopPropagation()}>
+                    <button className="pc-chip" onClick={() => togglePinChat(chat.id)}><PinIcon filled={chat.pinned} /></button>
+                    <button className="pc-chip" onClick={() => setChatMenuId(chatMenuId === chat.id ? null : chat.id)}>•••</button>
+                  </div>
+                </div>
+              ))}
+              {chatMenuId ? (
+                <div className="pc-card" style={{ padding: 8, background: "var(--panel-2)", boxShadow: "none" }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button className="pc-chip" onClick={() => renameChat(chatMenuId)}><RenameIcon /> Rename</button>
+                    <button className="pc-chip" onClick={() => togglePinChat(chatMenuId)}><PinIcon /> Pin</button>
+                    <button className="pc-chip" onClick={() => deleteChat(chatMenuId)} style={{ color: "var(--danger)" }}><TrashIcon /> Delete</button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ padding: 6, color: "var(--muted)", fontSize: 12, display: "flex", justifyContent: "space-between", gap: 10 }}>
+          <span>⌘/Ctrl+K search</span>
+          <span>Alt+N chat • Alt+P project</span>
         </div>
       </aside>
 
-      <main className="pc-main">
-        <div className="pc-header">
-          <div>
-            <h2>{activeChat?.title || "New chat"}</h2>
-            <small>{mode === "study" ? "Study mode" : mode === "image" ? "Image mode" : mode === "build" ? "Build mode" : "Chat mode"}</small>
+      <main className="pc-card" style={{ margin: 16, marginLeft: 8, marginRight: store.splitView ? 8 : 16, display: "grid", gridTemplateRows: "auto auto 1fr auto", minWidth: 0, overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: 16, borderBottom: "1px solid var(--border)" }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <h1 style={{ margin: 0, fontSize: 22, letterSpacing: -0.4 }}>{activeChat?.title || "Playcraft"}</h1>
+              <div style={{ position: "relative" }} ref={modeRef}>
+                <button ref={modeButtonRef} className="pc-chip" onClick={() => setModeOpen((v) => !v)}>
+                  <span>{modeMeta.icon}</span> {modeMeta.label}
+                </button>
+                {modeOpen ? (
+                  <div className="pc-card" style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 30, padding: 8, minWidth: 220, display: "grid", gap: 6 }}>
+                    {MODE_OPTIONS.map((option) => (
+                      <button key={option.id} className={`pc-item ${activeMode === option.id ? "active" : ""}`} onClick={() => activeChat && setChatMode(activeChat.id, option.id)}>
+                        <span>{option.icon}</span>
+                        <span>{option.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              {activeMode === "study" ? (
+                <select value={activeChat?.studyMode || "explain"} onChange={(e) => activeChat && setStudyMode(activeChat.id, e.target.value)} style={{ padding: "9px 12px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--panel-2)", color: "var(--text)" }}>
+                  {STUDY_OPTIONS.map((opt) => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
+                </select>
+              ) : null}
+              {activeProject ? (
+                <div className="pc-chip">🎨 {activeProject.stylePreset}</div>
+              ) : null}
+            </div>
+            <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
+              {activeProject ? `${activeProject.name} • ${activeProject.memory || "Project memory ready"}` : "Standalone chat"}
+            </div>
           </div>
-          <button className="pc-theme-btn" onClick={toggleTheme}>{state.theme === "light" ? <MoonIcon /> : <SunIcon />}</button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {loading ? <div className="pc-chip"><span className="pc-statusdot" /> {loadingLabel}</div> : null}
+            <button className="pc-btn ghost" onClick={() => activeChat && renameChat(activeChat.id)}>Rename</button>
+          </div>
         </div>
 
-        <div className="pc-messages">
-          <div className="pc-thread">
-            {(activeChat?.messages || []).map((msg) => (
-              <div key={msg.id} className={`pc-msg ${msg.role === "user" ? "user" : "assistant"}`}>
-                <div className="pc-avatar">{msg.role === "user" ? "U" : "AI"}</div>
-                <div className="pc-bubble">
-                  <MessageBody text={msg.content || (msg.pending ? "Typing..." : "")} />
-                  {(msg.files?.length || 0) > 0 && <div className="pc-files">{msg.files.map((file, i) => <FileCard key={i} file={file} />)}</div>}
-                  {msg.imageUrl ? <img src={msg.imageUrl} alt="Generated" className="pc-inline-img" /> : null}
+        {attachments.length ? (
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", display: "flex", flexWrap: "wrap", gap: 10 }}>
+            {attachments.map((file, idx) => (
+              <div key={`${file.name}-${idx}`} className="pc-card" style={{ padding: 10, display: "flex", alignItems: "center", gap: 10, boxShadow: "none" }}>
+                {file.kind === "image" ? <img src={file.dataUrl} alt={file.name} style={{ width: 52, height: 52, objectFit: "cover", borderRadius: 12 }} /> : <div style={{ width: 52, height: 52, borderRadius: 12, background: "var(--panel-3)", display: "grid", placeItems: "center" }}>{file.kind === "text" ? "📝" : "📄"}</div>}
+                <div>
+                  <div style={{ fontWeight: 700, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</div>
+                  <div style={{ color: "var(--muted)", fontSize: 12 }}>{file.kind}</div>
+                </div>
+                <button className="pc-chip" onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== idx))}>Remove</button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        <div ref={messagesRef} className="pc-scroll" onScroll={onScrollMessages} style={{ overflow: "auto", padding: 20, minHeight: 0 }}>
+          <div style={{ maxWidth: 980, margin: "0 auto", display: "grid", gap: 16 }}>
+            {(activeChat?.messages?.length ? activeChat.messages : []).map((msg) => (
+              <div key={msg.id} style={{ display: "grid", justifyItems: msg.role === "user" ? "end" : "start" }}>
+                <div style={{ maxWidth: "min(820px, 92%)", background: msg.role === "user" ? "var(--bubble-user)" : "var(--bubble-ai)", border: "1px solid var(--border)", borderRadius: 24, padding: 16, boxShadow: "var(--shadow)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ width: 34, height: 34, borderRadius: 14, background: msg.role === "user" ? "var(--accent-soft)" : "var(--panel-3)", display: "grid", placeItems: "center", fontSize: 16 }}>{msg.role === "user" ? "🧑" : "✨"}</div>
+                      <div>
+                        <div style={{ fontWeight: 800 }}>{msg.role === "user" ? "You" : "Playcraft"}</div>
+                        <div style={{ fontSize: 12, color: "var(--muted)" }}>{msg.timeLabel || nowLabel()}</div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {msg.pending ? <div className="pc-chip"><span className="pc-statusdot" /> {msg.status || "Thinking…"}</div> : null}
+                      {msg.role === "assistant" && msg.text ? <button className="pc-chip" onClick={() => speakText(msg.fullText || msg.text)}>Speak</button> : null}
+                    </div>
+                  </div>
+
+                  {msg.attachments?.length ? (
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+                      {msg.attachments.map((file, idx) => (
+                        <div key={idx} className="pc-card" style={{ padding: 8, display: "flex", alignItems: "center", gap: 10, boxShadow: "none" }}>
+                          {file.kind === "image" ? <img src={file.dataUrl} alt={file.name} style={{ width: 64, height: 64, borderRadius: 12, objectFit: "cover" }} /> : <div style={{ width: 50, height: 50, borderRadius: 12, background: "var(--panel-3)", display: "grid", placeItems: "center" }}>{file.kind === "text" ? "📝" : "📄"}</div>}
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</div>
+                            <div style={{ fontSize: 12, color: "var(--muted)" }}>{file.kind}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {(msg.artifacts?.length || msg.images?.length) ? (
+                    <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 6, marginBottom: 14 }}>
+                      {[...(msg.artifacts || []), ...(msg.images || [])].map((artifact) => {
+                        const versionCount = activeProject?.fileLibrary?.[artifact.name]?.length || 1;
+                        return (
+                          <ArtifactCard
+                            key={artifact.id}
+                            artifact={{ ...artifact, versionCount }}
+                            onOpen={openArtifact}
+                            onDownload={downloadArtifact}
+                            onPreview={selectArtifactPreview}
+                            onVersions={(item) => setVersionsFor(item)}
+                          />
+                        );
+                      })}
+                    </div>
+                  ) : null}
+
+                  {msg.pending && !msg.text ? <div className="pc-shimmer" style={{ height: 92, borderRadius: 18 }} /> : <MessageBody text={msg.text || ""} />}
                 </div>
               </div>
             ))}
-            <div ref={messagesBottomRef} />
           </div>
         </div>
 
-        <div className="pc-composer-wrap">
-          <div className="pc-composer">
-            <input ref={fileInputRef} type="file" multiple style={{ display: "none" }} onChange={(e) => addFiles(e.target.files)} />
+        <div style={{ borderTop: "1px solid var(--border)", padding: 16 }}>
+          <div style={{ maxWidth: 980, margin: "0 auto", display: "grid", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ position: "relative" }} ref={plusRef}>
+                <button ref={plusButtonRef} className="pc-btn" onClick={() => setPlusOpen((v) => !v)}><PlusIcon /> Add</button>
+                {plusOpen ? (
+                  <div className="pc-card" style={{ position: "absolute", bottom: "calc(100% + 10px)", left: 0, zIndex: 40, padding: 8, minWidth: 220, display: "grid", gap: 6 }}>
+                    <button className="pc-item" onClick={() => { fileInputRef.current?.click(); setPlusOpen(false); }}><span>📎</span><span>Add file</span></button>
+                    <button className="pc-item" onClick={() => { activeChat && setChatMode(activeChat.id, "study"); setPlusOpen(false); }}><span>📚</span><span>Study and learn</span></button>
+                    <button className="pc-item" onClick={() => { activeChat && setChatMode(activeChat.id, "image"); setPlusOpen(false); }}><span>🖼️</span><span>Create image</span></button>
+                    <button className="pc-item" onClick={() => { activeChat && setChatMode(activeChat.id, "build"); setPlusOpen(false); }}><span>🛠️</span><span>Build game / app</span></button>
+                    <button className="pc-item" onClick={() => { activeProject ? createChatInProject(activeProject.id) : createProjectWithChat(); setPlusOpen(false); }}><span>📁</span><span>{activeProject ? "New chat in project" : "Add project"}</span></button>
+                  </div>
+                ) : null}
+              </div>
 
-            <div ref={plusMenuRef}>
-              <button className="pc-plus" onClick={() => setPlusOpen((v) => !v)}><PlusIcon /></button>
-              {plusOpen && (
-                <div className="pc-menu">
-                  <button onClick={() => fileInputRef.current?.click()}><FileIcon /> Add file</button>
-                  <button onClick={() => { setChatMode("study"); setPlusOpen(false); }}><BookIcon /> Study and learn</button>
-                  <button onClick={() => { setChatMode("image"); setPlusOpen(false); }}><ImageIcon /> Create image</button>
-                  <button onClick={() => { addProject(); }}><FolderIcon /> Add project</button>
-                  <button onClick={() => createNewChat(selectedProjectId, "chat")}><ChatIcon /> New chat</button>
-                </div>
-              )}
+              <input ref={fileInputRef} type="file" multiple hidden onChange={(e) => handleFiles(e.target.files)} />
+
+              <button
+                className={`pc-btn ${voiceActive ? "primary" : ""}`}
+                onMouseDown={() => speechSupported && startSpeech()}
+                onMouseUp={() => voiceActive && stopSpeech()}
+                onTouchStart={() => speechSupported && startSpeech()}
+                onTouchEnd={() => voiceActive && stopSpeech()}
+                onClick={() => speechSupported && (voiceActive ? stopSpeech() : startSpeech())}
+                title={speechSupported ? "Hold to talk or tap to start" : "Speech not supported in this browser"}
+              >
+                <MicrophoneIcon active={voiceActive} />
+                {voiceActive ? "Listening…" : "Talk"}
+              </button>
+
+              {activeProject ? <div className="pc-chip">📁 {activeProject.name}</div> : <div className="pc-chip">💬 Standalone chat</div>}
+              <div className="pc-chip">Mode: {modeMeta.label}</div>
+              {loading ? <button className="pc-btn ghost" onClick={stopNetwork}>Stop</button> : null}
             </div>
 
-            <div className="pc-input-col">
+            <div className="pc-card" style={{ padding: 12, display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "end" }}>
               <textarea
                 ref={inputRef}
-                className="pc-textarea"
-                placeholder={mode === "image" ? "Describe the image you want..." : mode === "study" ? "Ask what you want to learn..." : mode === "build" ? "Ask to build a game, app, or code project..." : "Ask anything, drag files, or tap the mic and speak..."}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  e.target.style.height = "auto";
+                  e.target.style.height = `${Math.min(e.target.scrollHeight, 220)}px`;
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     send();
                   }
                 }}
+                placeholder={activeMode === "build" ? "Describe the game or app you want…" : activeMode === "image" ? "Describe the image you want, or upload reference screenshots…" : "Ask anything — games, code, study, ESP32, design…"}
+                style={{ width: "100%", minHeight: 70, maxHeight: 220, resize: "none", border: "none", outline: "none", background: "transparent", color: "var(--text)", lineHeight: 1.7, fontSize: 15 }}
               />
-              {attachments.length > 0 && (
-                <div className="pc-attach-row">
-                  {attachments.map((f, i) => (
-                    <div key={i} className="pc-chip">
-                      {f.kind === "image" ? <ImageIcon /> : <FileIcon />}<span>{f.name}</span>
-                      <button onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== i))}>×</button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="pc-toolbar">
-                <div ref={modeMenuRef} style={{ position: "relative" }}>
-                  <button className="pc-mode-switch" onClick={() => setModeOpen((v) => !v)}><ModeBadge mode={mode} /></button>
-                  {modeOpen && (
-                    <div className="pc-menu right">
-                      <button onClick={() => setChatMode("chat")}><ChatIcon /> Chat</button>
-                      <button onClick={() => setChatMode("study")}><BookIcon /> Study and learn</button>
-                      <button onClick={() => setChatMode("image")}><ImageIcon /> Create image</button>
-                      <button onClick={() => setChatMode("build")}><WandIcon /> Build</button>
-                    </div>
-                  )}
-                </div>
+              <div style={{ display: "grid", gap: 8 }}>
+                <button className="pc-btn primary" onClick={() => send()}><ArrowIcon /> Send</button>
+                {activeChat?.messages?.some((m) => m.animating) ? <button className="pc-btn" onClick={() => updateChat(activeChat.id, (chat) => ({ ...chat, messages: chat.messages.map((m) => m.animating ? { ...m, text: m.fullText || m.text, animating: false } : m) }))}>Finish reply</button> : null}
               </div>
             </div>
-
-            <button className={`pc-mic ${recording ? "recording" : ""}`} onClick={toggleVoice}><MicIcon /></button>
-            <button className="pc-send" onClick={send} disabled={loading}><SendIcon /></button>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, color: "var(--muted)", fontSize: 12 }}>
+              <span>Follow-up works in the same chat. You can keep scrolling while Playcraft is typing.</span>
+              <span>Enter = send • Shift+Enter = new line</span>
+            </div>
           </div>
         </div>
       </main>
+
+      {store.splitView ? (
+        <section className="pc-card pc-scroll" style={{ margin: 16, marginLeft: 8, padding: 14, overflow: "auto", display: "grid", gridTemplateRows: "auto 1fr auto", minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: 6 }}>
+            <div>
+              <div style={{ fontWeight: 900, fontSize: 18 }}>Preview & files</div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>{selectedPreviewArtifact ? selectedPreviewArtifact.name : "Pick a file card to preview"}</div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {selectedPreviewArtifact ? <button className="pc-chip" onClick={() => openArtifact(selectedPreviewArtifact)}>Open</button> : null}
+              {selectedPreviewArtifact ? <button className="pc-chip" onClick={() => downloadArtifact(selectedPreviewArtifact)}>Download</button> : null}
+            </div>
+          </div>
+          <div className="pc-card" style={{ background: "var(--preview-bg)", minHeight: 0, overflow: "hidden", display: "grid", alignContent: "stretch" }}>
+            {selectedPreviewArtifact ? (
+              selectedPreviewArtifact.kind === "image" || selectedPreviewArtifact.mime?.startsWith("image/") ? (
+                <div style={{ padding: 12 }}><img src={selectedPreviewArtifact.url || selectedPreviewArtifact.dataUrl} alt={selectedPreviewArtifact.name} style={{ width: "100%", borderRadius: 18, border: "1px solid var(--border)" }} /></div>
+              ) : selectedPreviewArtifact.kind === "html" || /html/i.test(selectedPreviewArtifact.name) ? (
+                <iframe title={selectedPreviewArtifact.name} srcDoc={selectedPreviewArtifact.content} style={{ width: "100%", height: "100%", minHeight: 420, border: "none" }} />
+              ) : (
+                <pre style={{ margin: 0, padding: 16, overflow: "auto", fontSize: 13, lineHeight: 1.6 }}>{selectedPreviewArtifact.content || "No preview available."}</pre>
+              )
+            ) : (
+              <div style={{ display: "grid", placeItems: "center", minHeight: 420, color: "var(--muted)", textAlign: "center", padding: 24 }}>
+                <div>
+                  <div style={{ fontSize: 40, marginBottom: 10 }}>🪄</div>
+                  <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>Preview shows up here</div>
+                  <div>Generate a game, file, or image and open it straight in the browser.</div>
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{ paddingTop: 14, display: "grid", gap: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".08em" }}>Project files</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {activeProject && Object.keys(activeProject.fileLibrary || {}).length ? Object.entries(activeProject.fileLibrary).map(([name, versions]) => {
+                const latest = versions[versions.length - 1];
+                return (
+                  <div key={name} className="pc-card" style={{ padding: 10, boxShadow: "none", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>{versions.length} version{versions.length > 1 ? "s" : ""}</div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button className="pc-chip" onClick={() => selectArtifactPreview({ ...latest, versionCount: versions.length })}>Preview</button>
+                      <button className="pc-chip" onClick={() => setVersionsFor({ name })}>Versions</button>
+                    </div>
+                  </div>
+                );
+              }) : <div style={{ color: "var(--muted)", fontSize: 13 }}>No saved files yet.</div>}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {versionsFor ? (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.18)", display: "grid", placeItems: "center", zIndex: 70 }} onClick={() => setVersionsFor(null)}>
+          <div className="pc-card pc-scroll" onClick={(e) => e.stopPropagation()} style={{ width: "min(640px, 92vw)", maxHeight: "76vh", overflow: "auto", padding: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+              <div>
+                <div style={{ fontWeight: 900, fontSize: 18 }}>{versionsFor.name}</div>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>Version history</div>
+              </div>
+              <button className="pc-chip" onClick={() => setVersionsFor(null)}>Close</button>
+            </div>
+            <div style={{ display: "grid", gap: 10 }}>
+              {versionsItems.slice().reverse().map((version, idx) => (
+                <div key={idx} className="pc-card" style={{ padding: 12, boxShadow: "none", display: "flex", justifyContent: "space-between", gap: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 800 }}>v{version.version || versionsItems.length - idx}</div>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>{new Date(version.savedAt).toLocaleString()}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button className="pc-chip" onClick={() => selectArtifactPreview({ ...version, versionCount: versionsItems.length })}>Preview</button>
+                    <button className="pc-chip" onClick={() => openArtifact(version)}>Open</button>
+                    <button className="pc-chip" onClick={() => downloadArtifact(version)}>Download</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
-
-export default App;
