@@ -414,6 +414,8 @@ export default function PlaycraftApp() {
   const [dragging, setDragging] = useState(false);
   const [plusOpen, setPlusOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [studyOpen, setStudyOpen] = useState(false);
   const [projectMenuId, setProjectMenuId] = useState(null);
   const [chatMenuId, setChatMenuId] = useState(null);
   const [versionsFor, setVersionsFor] = useState(null);
@@ -427,6 +429,10 @@ export default function PlaycraftApp() {
   const plusButtonRef = useRef(null);
   const modeRef = useRef(null);
   const modeButtonRef = useRef(null);
+  const appearanceRef = useRef(null);
+  const appearanceButtonRef = useRef(null);
+  const studyRef = useRef(null);
+  const studyButtonRef = useRef(null);
   const controllerRef = useRef(null);
   const recognitionRef = useRef(null);
   const shouldStickBottomRef = useRef(true);
@@ -446,6 +452,8 @@ export default function PlaycraftApp() {
 
   useOutsideClick([plusRef, plusButtonRef], () => setPlusOpen(false));
   useOutsideClick([modeRef, modeButtonRef], () => setModeOpen(false));
+  useOutsideClick([appearanceRef, appearanceButtonRef], () => setAppearanceOpen(false));
+  useOutsideClick([studyRef, studyButtonRef], () => setStudyOpen(false));
 
   const activeChat = useMemo(() => store.chats.find((c) => c.id === store.activeChatId) || store.chats[0], [store]);
   const activeProject = useMemo(() => store.projects.find((p) => p.id === activeChat?.projectId) || null, [store, activeChat]);
@@ -647,31 +655,35 @@ export default function PlaycraftApp() {
   };
 
   const startSpeech = () => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR || voiceActive) return;
-    const recognition = new SR();
-    recognition.lang = /[א-ת]/.test(input) ? "he-IL" : "en-US";
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    let finalText = "";
-    recognition.onstart = () => setVoiceActive(true);
-    recognition.onresult = (event) => {
-      let transcript = "";
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        transcript += event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalText += event.results[i][0].transcript;
-      }
-      setInput((prev) => `${prev} ${transcript}`.trim());
-    };
-    recognition.onend = () => {
+    try {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR || voiceActive) return;
+      const recognition = new SR();
+      recognition.lang = /[א-ת]/.test(input) ? "he-IL" : "en-US";
+      recognition.interimResults = true;
+      recognition.continuous = false;
+      let finalText = "";
+      recognition.onstart = () => setVoiceActive(true);
+      recognition.onresult = (event) => {
+        let transcript = "";
+        for (let i = event.resultIndex; i < event.results.length; i += 1) {
+          transcript += event.results[i][0].transcript;
+          if (event.results[i].isFinal) finalText += event.results[i][0].transcript;
+        }
+        setInput((prev) => `${prev} ${transcript}`.trim());
+      };
+      recognition.onend = () => {
+        setVoiceActive(false);
+        if (finalText.trim()) setInput((prev) => prev.trim());
+      };
+      recognition.onerror = () => setVoiceActive(false);
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (error) {
+      console.error(error);
       setVoiceActive(false);
-      if (finalText.trim()) {
-        setInput((prev) => prev.trim());
-      }
-    };
-    recognition.onerror = () => setVoiceActive(false);
-    recognitionRef.current = recognition;
-    recognition.start();
+      setLoadingLabel("Voice is not available here");
+    }
   };
 
   const stopSpeech = () => {
@@ -723,11 +735,15 @@ export default function PlaycraftApp() {
   };
 
   const speakText = (text) => {
-    if (!("speechSynthesis" in window) || !text) return;
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = /[א-ת]/.test(text) ? "he-IL" : "en-US";
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
+    try {
+      if (!("speechSynthesis" in window) || !text) return;
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = /[א-ת]/.test(text) ? "he-IL" : "en-US";
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    } catch (error) {
+      console.error(error);
+    }
   };
 
   const send = async (overrideText = null) => {
@@ -959,19 +975,40 @@ export default function PlaycraftApp() {
 
         <div style={{ display: "grid", gap: 10, padding: 6 }}>
           <div className="pc-card" style={{ padding: 12, background: "var(--panel-2)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
               <div style={{ fontSize: 12, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".08em" }}>Appearance</div>
               <button className="pc-chip" onClick={() => setStore((prev) => ({ ...prev, voiceReply: !prev.voiceReply }))}>{store.voiceReply ? "🔊 Voice on" : "🔈 Voice off"}</button>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
-              <select value={store.theme} onChange={(e) => setStore((prev) => ({ ...prev, theme: e.target.value }))} style={{ padding: "10px 12px", borderRadius: 14, border: "1px solid var(--border)", background: "var(--panel)", color: "var(--text)" }}>
-                {Object.entries(THEMES).map(([id, theme]) => <option key={id} value={id}>{theme.name}</option>)}
-              </select>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: 8, borderRadius: 14, border: "1px solid var(--border)", background: "var(--panel)" }}>
-                {ACCENTS.map((color) => (
-                  <button key={color} onClick={() => setStore((prev) => ({ ...prev, accent: color }))} title={color} style={{ width: 18, height: 18, borderRadius: 999, border: color === store.accent ? "2px solid var(--text)" : "2px solid transparent", background: color, cursor: "pointer" }} />
-                ))}
-              </div>
+            <div style={{ position: "relative" }} ref={appearanceRef}>
+              <button ref={appearanceButtonRef} className="pc-btn" style={{ width: "100%", justifyContent: "space-between" }} onClick={() => setAppearanceOpen((v) => !v)}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><ThemeIcon /> Backgrounds & colors</span>
+                <span>{THEMES[store.theme]?.name}</span>
+              </button>
+              {appearanceOpen ? (
+                <div className="pc-card" style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, right: 0, zIndex: 30, padding: 10, display: "grid", gap: 10 }}>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".08em" }}>Background</div>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {Object.entries(THEMES).map(([id, theme]) => (
+                        <button key={id} className={`pc-item ${store.theme === id ? "active" : ""}`} onClick={() => setStore((prev) => ({ ...prev, theme: id }))}>
+                          <span style={{ width: 12, height: 12, borderRadius: 999, background: theme.vars["--panel-3"], border: "1px solid var(--border)" }} />
+                          <span>{theme.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".08em" }}>Accent color</div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {ACCENTS.map((color) => (
+                        <button key={color} className="pc-chip" onClick={() => setStore((prev) => ({ ...prev, accent: color }))} style={{ padding: 6 }} title={color}>
+                          <span style={{ width: 18, height: 18, borderRadius: 999, display: "inline-block", background: color, border: color === store.accent ? "2px solid var(--text)" : "2px solid transparent" }} />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="pc-card" style={{ padding: 12, background: "var(--panel-2)" }}>
@@ -1081,7 +1118,7 @@ export default function PlaycraftApp() {
                   <span>{modeMeta.icon}</span> {modeMeta.label}
                 </button>
                 {modeOpen ? (
-                  <div className="pc-card" style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 30, padding: 8, minWidth: 220, display: "grid", gap: 6 }}>
+                  <div className="pc-card" style={{ position: "absolute", top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)", zIndex: 30, padding: 8, minWidth: 220, display: "grid", gap: 6 }}>
                     {MODE_OPTIONS.map((option) => (
                       <button key={option.id} className={`pc-item ${activeMode === option.id ? "active" : ""}`} onClick={() => activeChat && setChatMode(activeChat.id, option.id)}>
                         <span>{option.icon}</span>
@@ -1092,9 +1129,21 @@ export default function PlaycraftApp() {
                 ) : null}
               </div>
               {activeMode === "study" ? (
-                <select value={activeChat?.studyMode || "explain"} onChange={(e) => activeChat && setStudyMode(activeChat.id, e.target.value)} style={{ padding: "9px 12px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--panel-2)", color: "var(--text)" }}>
-                  {STUDY_OPTIONS.map((opt) => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
-                </select>
+                <div style={{ position: "relative" }} ref={studyRef}>
+                  <button ref={studyButtonRef} className="pc-chip" onClick={() => setStudyOpen((v) => !v)}>
+                    📚 {STUDY_OPTIONS.find((opt) => opt.id === (activeChat?.studyMode || "explain"))?.label || "Explain simply"}
+                  </button>
+                  {studyOpen ? (
+                    <div className="pc-card" style={{ position: "absolute", top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)", zIndex: 30, padding: 8, minWidth: 220, display: "grid", gap: 6 }}>
+                      {STUDY_OPTIONS.map((opt) => (
+                        <button key={opt.id} className={`pc-item ${(activeChat?.studyMode || "explain") === opt.id ? "active" : ""}`} onClick={() => { if (activeChat) setStudyMode(activeChat.id, opt.id); setStudyOpen(false); }}>
+                          <span>📘</span>
+                          <span>{opt.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
               {activeProject ? (
                 <div className="pc-chip">🎨 {activeProject.stylePreset}</div>
@@ -1105,7 +1154,7 @@ export default function PlaycraftApp() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            {loading ? <div className="pc-chip"><span className="pc-statusdot" /> {loadingLabel}</div> : null}
+            {loading ? <div className="pc-chip" style={{ gap: 10 }}><span className="pc-statusdot" /> <span>{loadingLabel}</span></div> : null}
             <button className="pc-btn ghost" onClick={() => activeChat && renameChat(activeChat.id)}>Rename</button>
           </div>
         </div>
