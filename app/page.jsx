@@ -1,806 +1,741 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
-const now = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-const TEXT_EXTENSIONS = [
-  ".txt", ".md", ".json", ".js", ".jsx", ".ts", ".tsx", ".css", ".html", ".htm",
-  ".xml", ".csv", ".yml", ".yaml", ".py", ".java", ".c", ".cpp", ".cs", ".php",
-  ".rb", ".go", ".rs", ".swift", ".sql", ".sh"
-];
-
-function isProbablyTextFile(file) {
-  const type = (file.type || "").toLowerCase();
-  const name = (file.name || "").toLowerCase();
-  return (
-    type.startsWith("text/") ||
-    type.includes("json") ||
-    type.includes("javascript") ||
-    type.includes("typescript") ||
-    type.includes("xml") ||
-    TEXT_EXTENSIONS.some((ext) => name.endsWith(ext))
-  );
+function createChat(name = "New chat") {
+  return {
+    id: uid(),
+    title: name,
+    mode: "chat",
+    messages: [],
+    createdAt: Date.now(),
+  };
 }
 
-function stripWrapper(text = "") {
-  return text.replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/i, "").trim();
+function createProject(name = "My project") {
+  const firstChat = createChat("New chat");
+  return {
+    id: uid(),
+    name,
+    chats: [firstChat],
+    createdAt: Date.now(),
+  };
 }
 
-function extractHtmlFromReply(text = "") {
-  if (!text) return "";
+const DEFAULT_PROJECTS = [createProject("General")];
 
-  const tagMatch = text.match(/<game_html>([\s\S]*?)<\/game_html>/i);
-  if (tagMatch?.[1]) return stripWrapper(tagMatch[1]);
-
-  const fenced = text.match(/```html\s*([\s\S]*?)```/i) || text.match(/```\s*([\s\S]*?)```/i);
-  if (fenced?.[1] && /<(?:!doctype|html|body|canvas|script)/i.test(fenced[1])) return stripWrapper(fenced[1]);
-
-  const doctypeIndex = text.search(/<!doctype html>/i);
-  if (doctypeIndex >= 0) return text.slice(doctypeIndex).trim();
-
-  const htmlIndex = text.search(/<html[\s>]/i);
-  if (htmlIndex >= 0) return text.slice(htmlIndex).trim();
-
-  return "";
+function inferTitle(text) {
+  const cleaned = (text || "").trim().replace(/\s+/g, " ");
+  if (!cleaned) return "New chat";
+  return cleaned.slice(0, 32) + (cleaned.length > 32 ? "…" : "");
 }
 
-function extractSummaryFromReply(text = "") {
-  return text.match(/<game_summary>([\s\S]*?)<\/game_summary>/i)?.[1]?.trim() || "";
+function prettyFileSize(bytes) {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function cleanReplyForDisplay(text = "") {
-  return text
-    .replace(/<game_summary>[\s\S]*?<\/game_summary>/gi, "")
-    .replace(/<game_html>[\s\S]*?<\/game_html>/gi, "")
-    .trim();
-}
+function readFile(file) {
+  return new Promise((resolve) => {
+    const isImage = file.type.startsWith("image/");
+    const isTextish = /^(text\/|application\/(json|javascript|xml))/.test(file.type) || /\.(txt|md|js|jsx|ts|tsx|css|html|json|ino|cpp|c|h|py|java|rb|go|rs|sql)$/i.test(file.name);
 
-function readFileForUi(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = reject;
-    reader.onload = () => {
-      const dataUrl = typeof reader.result === "string" ? reader.result : "";
-      const base64 = dataUrl.includes(",") ? dataUrl.split(",")[1] : "";
-      resolve({
+    if (isImage) {
+      const reader = new FileReader();
+      reader.onload = () => resolve({
         id: uid(),
         name: file.name,
-        type: file.type,
+        type: file.type || "image/png",
         size: file.size,
-        dataUrl,
-        base64,
-        text: null
+        dataUrl: String(reader.result),
       });
-    };
-    reader.readAsDataURL(file);
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    if (isTextish) {
+      const reader = new FileReader();
+      reader.onload = () => resolve({
+        id: uid(),
+        name: file.name,
+        type: file.type || "text/plain",
+        size: file.size,
+        text: String(reader.result).slice(0, 50000),
+      });
+      reader.readAsText(file);
+      return;
+    }
+
+    resolve({
+      id: uid(),
+      name: file.name,
+      type: file.type || "application/octet-stream",
+      size: file.size,
+      text: `Binary file attached: ${file.name}`,
+    });
   });
 }
 
-function readTextFile(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = reject;
-    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
-    reader.readAsText(file);
-  });
-}
-
-function downloadTextFile(filename, text) {
-  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-async function copyToClipboard(text) {
-  if (!text) return false;
-  await navigator.clipboard.writeText(text);
-  return true;
-}
-
-function ActionButton({ label, onClick, primary = false, danger = false, disabled = false, icon }) {
+function TypingDots() {
   return (
-    <button
-      onClick={disabled ? undefined : onClick}
-      disabled={disabled}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 8,
-        height: 38,
-        padding: "0 14px",
-        borderRadius: 12,
-        border: primary ? "none" : `1px solid ${danger ? "rgba(233,110,98,0.45)" : "rgba(255,255,255,0.1)"}`,
-        background: primary ? "#d17947" : danger ? "rgba(233,110,98,0.1)" : "#2e2b27",
-        color: primary ? "#fff" : danger ? "#f08a80" : "#ebe5da",
-        cursor: disabled ? "default" : "pointer",
-        fontSize: 13,
-        fontWeight: 500,
-        opacity: disabled ? 0.6 : 1,
-        boxShadow: primary ? "0 8px 24px rgba(209,121,71,0.28)" : "none"
-      }}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
-function IconButton({ icon, onClick, title, active = false, danger = false, disabled = false }) {
-  return (
-    <button
-      title={title}
-      onClick={disabled ? undefined : onClick}
-      disabled={disabled}
-      style={{
-        width: 34,
-        height: 34,
-        borderRadius: 10,
-        border: "1px solid rgba(255,255,255,0.08)",
-        background: active ? "rgba(0,0,0,0.42)" : "transparent",
-        color: danger ? "#f08a80" : "#cfc7bc",
-        display: "grid",
-        placeItems: "center",
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.6 : 1
-      }}
-    >
-      {icon}
-    </button>
+    <div className="typingDots" aria-label="Thinking">
+      <span />
+      <span />
+      <span />
+    </div>
   );
 }
 
 function AttachmentPill({ file, onRemove }) {
+  const isImage = file.type?.startsWith("image/") && file.dataUrl;
   return (
-    <div
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "8px 10px",
-        borderRadius: 12,
-        background: "rgba(255,255,255,0.05)",
-        border: "1px solid rgba(255,255,255,0.08)",
-        color: "#d7d0c5",
-        fontSize: 12
-      }}
-    >
-      <span style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
-      <button
-        onClick={onRemove}
-        style={{ border: "none", background: "transparent", color: "#b7aea1", cursor: "pointer", fontSize: 14 }}
-      >
-        ✕
-      </button>
-    </div>
-  );
-}
-
-function CodeCard({ html, onPreview, onCopy, onDownload, onRepair, busy }) {
-  return (
-    <div
-      style={{
-        marginTop: 14,
-        borderRadius: 18,
-        border: "1px solid rgba(255,255,255,0.08)",
-        background: "#2a2723",
-        overflow: "hidden"
-      }}
-    >
-      <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <div>
-          <div style={{ color: "#f4eee4", fontSize: 15, fontWeight: 600 }}>output.html</div>
-          <div style={{ color: "#a79f93", fontSize: 12, marginTop: 4 }}>Generated HTML file</div>
-        </div>
-        <ActionButton label="Open preview" onClick={() => onPreview(html)} />
-      </div>
-      <div style={{ padding: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <ActionButton label="Copy code" onClick={() => onCopy(html)} />
-        <ActionButton label="Download" onClick={() => onDownload(html)} />
-        <ActionButton label="Repair" onClick={() => onRepair(html)} disabled={busy} />
-      </div>
-    </div>
-  );
-}
-
-function MessageActions({ onCopy, onLike, onDislike, onRetry, canRetry }) {
-  return (
-    <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-      <IconButton icon={<CopyIcon />} onClick={onCopy} title="Copy" />
-      <IconButton icon={<ThumbUpIcon />} onClick={onLike} title="Like" />
-      <IconButton icon={<ThumbDownIcon />} onClick={onDislike} title="Dislike" />
-      <IconButton icon={<RefreshIcon />} onClick={onRetry} title="Try again" disabled={!canRetry} />
-    </div>
-  );
-}
-
-function AssistantMessage({ msg, onCopyMessage, onPreviewHtml, onCopyHtml, onDownloadHtml, onRepairHtml, onRetry, onLike, onDislike, loading }) {
-  if (msg.pending) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#c6beb2", marginBottom: 28 }}>
-        <Spinner />
-        <span>Working…</span>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ marginBottom: 30 }}>
-      {!!msg.summary && <div style={{ color: "#a79f93", fontSize: 13, marginBottom: 10 }}>{msg.summary}</div>}
-      <div style={{ color: "#ece6dc", fontSize: 15, lineHeight: 1.9, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{msg.content}</div>
-
-      {!!msg.generatedHtml && (
-        <CodeCard
-          html={msg.generatedHtml}
-          onPreview={onPreviewHtml}
-          onCopy={onCopyHtml}
-          onDownload={onDownloadHtml}
-          onRepair={onRepairHtml}
-          busy={loading}
-        />
+    <div className="attachmentPill">
+      {isImage ? (
+        <img src={file.dataUrl} alt={file.name} className="attachmentThumb" />
+      ) : (
+        <div className="attachmentIcon">📄</div>
       )}
-
-      <MessageActions
-        onCopy={onCopyMessage}
-        onLike={onLike}
-        onDislike={onDislike}
-        onRetry={onRetry}
-        canRetry
-      />
+      <div className="attachmentMeta">
+        <div className="attachmentName">{file.name}</div>
+        <div className="attachmentSize">{prettyFileSize(file.size)}</div>
+      </div>
+      {onRemove ? (
+        <button className="tinyGhost" onClick={onRemove} type="button">✕</button>
+      ) : null}
     </div>
   );
 }
 
-function UserMessage({ msg }) {
+function MessageBubble({ msg }) {
+  const isUser = msg.role === "user";
   return (
-    <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 30 }}>
-      <div style={{ maxWidth: 720, background: "#0c0c0c", color: "#f4eee6", padding: "16px 18px", borderRadius: 18, lineHeight: 1.75, fontSize: 15, boxShadow: "0 8px 30px rgba(0,0,0,0.18)", whiteSpace: "pre-wrap" }}>
-        {msg.content}
-        {!!msg.files?.length && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+    <div className={`messageRow ${isUser ? "user" : "assistant"}`}>
+      <div className="avatar">{isUser ? "U" : "P"}</div>
+      <div className="messageBody">
+        <div className="messageHeader">{isUser ? "You" : "Playcraft"}</div>
+
+        {msg.files?.length ? (
+          <div className="messageFiles">
             {msg.files.map((file) => (
-              <div key={file.id} style={{ padding: "8px 10px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)", fontSize: 12, color: "#d9d2c6" }}>
-                📎 {file.name}
-              </div>
+              <AttachmentPill key={file.id} file={file} />
             ))}
           </div>
-        )}
+        ) : null}
+
+        <div className={`bubble ${isUser ? "userBubble" : "assistantBubble"}`}>
+          {msg.pending ? <TypingDots /> : <div className="bubbleText">{msg.content}</div>}
+        </div>
+
+        {msg.sources?.length ? (
+          <div className="sourcesWrap">
+            <div className="sourcesTitle">Sources</div>
+            <div className="sourcesList">
+              {msg.sources.map((source, index) => (
+                <a
+                  key={`${source.url}-${index}`}
+                  className="sourceItem"
+                  href={source.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <span className="sourceIndex">{index + 1}</span>
+                  <span className="sourceText">{source.title || source.url}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
 }
 
-export default function App() {
-  const [chats, setChats] = useState([]);
-  const [activeId, setActiveId] = useState(null);
-  const [input, setInput] = useState("");
+export default function Page() {
+  const [projects, setProjects] = useState(DEFAULT_PROJECTS);
+  const [activeProjectId, setActiveProjectId] = useState(DEFAULT_PROJECTS[0].id);
+  const [activeChatId, setActiveChatId] = useState(DEFAULT_PROJECTS[0].chats[0].id);
+  const [text, setText] = useState("");
   const [attachments, setAttachments] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [previewHtml, setPreviewHtml] = useState("");
-  const [openChatMenuId, setOpenChatMenuId] = useState(null);
-  const [hoveredChatId, setHoveredChatId] = useState(null);
-  const [toast, setToast] = useState("");
+  const [sending, setSending] = useState(false);
+  const [showPlusMenu, setShowPlusMenu] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [error, setError] = useState("");
 
-  const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
-  const bottomRef = useRef(null);
+  const messagesRef = useRef(null);
+  const textareaRef = useRef(null);
   const abortRef = useRef(null);
-
-  const activeChat = chats.find((chat) => chat.id === activeId);
-  const canSend = (!!input.trim() || attachments.length > 0) && !loading;
+  const dragCounterRef = useRef(0);
 
   useEffect(() => {
-    if (!chats.length) {
-      const id = uid();
-      setChats([{ id, title: "New chat", messages: [] }]);
-      setActiveId(id);
-    }
-  }, [chats.length]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeChat?.messages?.length, previewHtml, loading]);
-
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(""), 1800);
-    return () => clearTimeout(t);
-  }, [toast]);
-
-  const updateTextareaHeight = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
-  }, []);
-
-  const createChat = useCallback(() => {
-    const id = uid();
-    setChats((prev) => [{ id, title: "New chat", messages: [] }, ...prev]);
-    setActiveId(id);
-    setInput("");
-    setAttachments([]);
-    setPreviewHtml("");
-    setOpenChatMenuId(null);
-    requestAnimationFrame(() => textareaRef.current?.focus());
-  }, []);
-
-  const renameChat = useCallback((chatId) => {
-    const current = chats.find((c) => c.id === chatId);
-    const nextTitle = window.prompt("New chat name", current?.title || "");
-    if (!nextTitle?.trim()) return;
-    setChats((prev) => prev.map((chat) => (chat.id === chatId ? { ...chat, title: nextTitle.trim() } : chat)));
-    setOpenChatMenuId(null);
-  }, [chats]);
-
-  const deleteChat = useCallback((chatId) => {
-    setChats((prev) => {
-      const next = prev.filter((chat) => chat.id !== chatId);
-      if (chatId === activeId) {
-        setActiveId(next[0]?.id || null);
-        setPreviewHtml("");
-      }
-      return next;
-    });
-    setOpenChatMenuId(null);
-  }, [activeId]);
-
-  const addFiles = useCallback(async (fileList) => {
-    const files = Array.from(fileList || []);
-    if (!files.length) return;
-
-    const loaded = await Promise.all(files.map(async (file) => {
-      const uiFile = await readFileForUi(file);
-      if (isProbablyTextFile(file)) {
-        try {
-          uiFile.text = await readTextFile(file);
-        } catch {
-          uiFile.text = null;
+    try {
+      const raw = localStorage.getItem("playcraft-projects-v3");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) {
+          setProjects(parsed);
+          setActiveProjectId(parsed[0].id);
+          setActiveChatId(parsed[0].chats?.[0]?.id || null);
         }
       }
-      return uiFile;
-    }));
-
-    setAttachments((prev) => [...prev, ...loaded]);
+    } catch {}
   }, []);
 
-  const requestAssistantReply = useCallback(async ({ history, assistantId }) => {
-    abortRef.current = new AbortController();
+  useEffect(() => {
+    localStorage.setItem("playcraft-projects-v3", JSON.stringify(projects));
+  }, [projects]);
 
-    const resp = await fetch("/api/playcraft", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: history }),
-      signal: abortRef.current.signal
-    });
+  const activeProject = useMemo(
+    () => projects.find((project) => project.id === activeProjectId) || projects[0],
+    [projects, activeProjectId]
+  );
 
-    const json = await resp.json();
-    if (!resp.ok || json?.error) {
-      throw new Error(json?.error || `Request failed with status ${resp.status}`);
+  const activeChat = useMemo(() => {
+    if (!activeProject) return null;
+    return activeProject.chats.find((chat) => chat.id === activeChatId) || activeProject.chats[0] || null;
+  }, [activeProject, activeChatId]);
+
+  useEffect(() => {
+    if (!activeProject && projects.length) setActiveProjectId(projects[0].id);
+  }, [activeProject, projects]);
+
+  useEffect(() => {
+    if (!activeChat && activeProject?.chats?.length) setActiveChatId(activeProject.chats[0].id);
+  }, [activeChat, activeProject]);
+
+  useEffect(() => {
+    messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" });
+  }, [activeChat?.messages?.length]);
+
+  const updateActiveChat = (updater) => {
+    setProjects((prev) =>
+      prev.map((project) => {
+        if (project.id !== activeProjectId) return project;
+        return {
+          ...project,
+          chats: project.chats.map((chat) => {
+            if (chat.id !== activeChatId) return chat;
+            return typeof updater === "function" ? updater(chat) : { ...chat, ...updater };
+          }),
+        };
+      })
+    );
+  };
+
+  const createProjectNow = () => {
+    const name = window.prompt("Project name?")?.trim();
+    if (!name) return;
+    const project = createProject(name);
+    setProjects((prev) => [project, ...prev]);
+    setActiveProjectId(project.id);
+    setActiveChatId(project.chats[0].id);
+  };
+
+  const createChatNow = (projectId = activeProjectId) => {
+    const newChat = createChat("New chat");
+    setProjects((prev) =>
+      prev.map((project) =>
+        project.id === projectId
+          ? { ...project, chats: [newChat, ...project.chats] }
+          : project
+      )
+    );
+    setActiveProjectId(projectId);
+    setActiveChatId(newChat.id);
+  };
+
+  const renameProject = (projectId) => {
+    const project = projects.find((p) => p.id === projectId);
+    const name = window.prompt("New project name?", project?.name || "")?.trim();
+    if (!name) return;
+    setProjects((prev) => prev.map((project) => (project.id === projectId ? { ...project, name } : project)));
+  };
+
+  const renameChat = (chatId) => {
+    const chat = activeProject?.chats.find((c) => c.id === chatId);
+    const title = window.prompt("New chat name?", chat?.title || "")?.trim();
+    if (!title) return;
+    setProjects((prev) =>
+      prev.map((project) =>
+        project.id === activeProjectId
+          ? { ...project, chats: project.chats.map((c) => (c.id === chatId ? { ...c, title } : c)) }
+          : project
+      )
+    );
+  };
+
+  const removeChat = (chatId) => {
+    if (!activeProject) return;
+    if (activeProject.chats.length === 1) return;
+    setProjects((prev) =>
+      prev.map((project) =>
+        project.id === activeProjectId
+          ? { ...project, chats: project.chats.filter((c) => c.id !== chatId) }
+          : project
+      )
+    );
+    const next = activeProject.chats.find((c) => c.id !== chatId);
+    if (next) setActiveChatId(next.id);
+  };
+
+  const attachFiles = async (files) => {
+    const loaded = await Promise.all(Array.from(files).map(readFile));
+    setAttachments((prev) => [...prev, ...loaded]);
+  };
+
+  const onDragEnter = (e) => {
+    e.preventDefault();
+    dragCounterRef.current += 1;
+    setDragging(true);
+  };
+  const onDragLeave = (e) => {
+    e.preventDefault();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setDragging(false);
     }
+  };
+  const onDragOver = (e) => e.preventDefault();
+  const onDrop = async (e) => {
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setDragging(false);
+    if (e.dataTransfer.files?.length) await attachFiles(e.dataTransfer.files);
+  };
 
-    const reply = cleanReplyForDisplay(json.reply || "") || json.summary || "Done.";
-    const summary = json.summary || extractSummaryFromReply(json.reply || "");
-    const generatedHtml = json.generatedHtml || extractHtmlFromReply(json.reply || "");
-
-    setChats((prev) => prev.map((chat) => {
-      if (chat.id !== activeId) return chat;
-      return {
+  const applyTyping = (messageId, fullText, sources = []) => {
+    let index = 0;
+    const tick = () => {
+      index += Math.max(1, Math.ceil(fullText.length / 140));
+      const nextSlice = fullText.slice(0, index);
+      updateActiveChat((chat) => ({
         ...chat,
-        messages: chat.messages.map((message) => (
-          message.id === assistantId ? { ...message, pending: false, content: reply, summary, generatedHtml } : message
-        ))
-      };
-    }));
+        messages: chat.messages.map((msg) =>
+          msg.id === messageId
+            ? { ...msg, content: nextSlice, pending: index < fullText.length, sources: index >= fullText.length ? sources : [] }
+            : msg
+        ),
+      }));
+      if (index < fullText.length) {
+        setTimeout(tick, 14);
+      }
+    };
+    tick();
+  };
 
-    if (generatedHtml) setPreviewHtml(generatedHtml);
-  }, [activeId]);
+  const send = async () => {
+    const content = text.trim();
+    if (!content && !attachments.length) return;
+    if (!activeChat || sending) return;
 
-  const sendMessage = useCallback(async (override = null) => {
-    if (loading || !activeId) return;
-
-    const text = typeof override?.text === "string" ? override.text.trim() : input.trim();
-    const files = Array.isArray(override?.files) ? override.files : attachments;
-
-    if (!text && !files.length) return;
+    setError("");
+    setShowPlusMenu(false);
 
     const userMessage = {
       id: uid(),
       role: "user",
-      content: text,
-      files: [...files],
-      time: now()
+      content,
+      files: attachments,
+      createdAt: Date.now(),
     };
-
-    const pendingId = uid();
-    const pendingMessage = {
-      id: pendingId,
+    const assistantMessage = {
+      id: uid(),
       role: "assistant",
       content: "",
-      summary: "",
-      generatedHtml: "",
       pending: true,
-      time: now()
+      createdAt: Date.now(),
+      sources: [],
     };
 
-    const history = [...(activeChat?.messages || []), userMessage];
-
-    setChats((prev) => prev.map((chat) => {
-      if (chat.id !== activeId) return chat;
-      const title = !chat.messages.length && text ? text.slice(0, 42) + (text.length > 42 ? "…" : "") : chat.title;
-      return { ...chat, title, messages: [...chat.messages, userMessage, pendingMessage] };
+    const nextMessages = [...activeChat.messages, userMessage, assistantMessage];
+    updateActiveChat((chat) => ({
+      ...chat,
+      title: chat.messages.length ? chat.title : inferTitle(content || attachments[0]?.name || "New chat"),
+      messages: nextMessages,
     }));
 
-    setInput("");
+    setText("");
     setAttachments([]);
-    setLoading(true);
-    setOpenChatMenuId(null);
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
+    if (textareaRef.current) textareaRef.current.style.height = "56px";
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setSending(true);
 
     try {
-      await requestAssistantReply({ history, assistantId: pendingId });
-    } catch (error) {
-      const aborted = error?.name === "AbortError";
-      setChats((prev) => prev.map((chat) => {
-        if (chat.id !== activeId) return chat;
-        return {
-          ...chat,
-          messages: chat.messages.map((message) => (
-            message.id === pendingId
-              ? {
-                  ...message,
-                  pending: false,
-                  content: aborted ? "Stopped." : `⚠️ ${error?.message || "Something went wrong."}`,
-                  summary: "",
-                  generatedHtml: ""
-                }
-              : message
-          ))
-        };
-      }));
-    } finally {
-      abortRef.current = null;
-      setLoading(false);
-    }
-  }, [activeChat?.messages, activeId, attachments, input, loading, requestAssistantReply]);
+      const response = await fetch("/api/playcraft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          mode: activeChat.mode,
+          messages: nextMessages.filter((msg) => !msg.pending),
+        }),
+      });
 
-  const retryAssistant = useCallback(async (assistantId) => {
-    if (loading || !activeChat) return;
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || "Request failed");
+      }
 
-    const index = activeChat.messages.findIndex((message) => message.id === assistantId);
-    if (index <= 0) return;
-
-    const history = activeChat.messages.slice(0, index).filter((message) => message.role === "user" || message.role === "assistant");
-
-    setChats((prev) => prev.map((chat) => {
-      if (chat.id !== activeId) return chat;
-      return {
+      applyTyping(assistantMessage.id, data.text || "", data.sources || []);
+    } catch (err) {
+      const message = err?.name === "AbortError" ? "Stopped." : `⚠️ ${err.message}`;
+      updateActiveChat((chat) => ({
         ...chat,
-        messages: chat.messages.map((message) => (
-          message.id === assistantId
-            ? { ...message, pending: true, content: "", summary: "", generatedHtml: "" }
-            : message
-        ))
-      };
-    }));
-
-    setLoading(true);
-    try {
-      await requestAssistantReply({ history, assistantId });
-    } catch (error) {
-      const aborted = error?.name === "AbortError";
-      setChats((prev) => prev.map((chat) => {
-        if (chat.id !== activeId) return chat;
-        return {
-          ...chat,
-          messages: chat.messages.map((message) => (
-            message.id === assistantId
-              ? {
-                  ...message,
-                  pending: false,
-                  content: aborted ? "Stopped." : `⚠️ ${error?.message || "Something went wrong."}`,
-                  summary: "",
-                  generatedHtml: ""
-                }
-              : message
-          ))
-        };
+        messages: chat.messages.map((msg) =>
+          msg.id === assistantMessage.id ? { ...msg, content: message, pending: false } : msg
+        ),
       }));
     } finally {
+      setSending(false);
       abortRef.current = null;
-      setLoading(false);
     }
-  }, [activeChat, activeId, loading, requestAssistantReply]);
+  };
 
-  const stopGeneration = useCallback(() => {
+  const stop = () => {
     abortRef.current?.abort();
-  }, []);
+  };
 
-  const repairHtml = useCallback((html) => {
-    if (!html || loading) return;
-    sendMessage({
-      text: "Repair the current HTML project. Keep the same idea, fix bugs, improve the code and UI, and return the full HTML again.",
-      files: [{ id: uid(), name: "output.html", type: "text/html", text: html }]
-    });
-  }, [loading, sendMessage]);
-
-  const onKeyDown = useCallback((event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      sendMessage();
-    }
-  }, [sendMessage]);
-
-  const copyMessage = useCallback(async (text) => {
-    const ok = await copyToClipboard(text);
-    setToast(ok ? "Copied" : "Copy failed");
-  }, []);
-
-  const copyHtml = useCallback(async (html) => {
-    const ok = await copyToClipboard(html);
-    setToast(ok ? "Code copied" : "Copy failed");
-  }, []);
-
-  const downloadHtml = useCallback((html) => {
-    downloadTextFile("output.html", html);
-    setToast("Downloaded");
-  }, []);
-
-  const renderedMessages = useMemo(() => activeChat?.messages || [], [activeChat?.messages]);
+  const setStudyMode = () => {
+    updateActiveChat((chat) => ({ ...chat, mode: chat.mode === "study" ? "chat" : "study" }));
+    setShowPlusMenu(false);
+  };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#23211d", color: "#f5efe6", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
-      <style>{`
-        * { box-sizing: border-box; }
-        html, body { margin: 0; padding: 0; background: #23211d; }
-        body { color: #f5efe6; }
-        button, input, textarea { font-family: inherit; }
-        textarea::placeholder { color: #9d968c; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @media (max-width: 960px) {
-          .pc-sidebar { display: none !important; }
-          .pc-main { width: 100% !important; }
-          .pc-composer { left: 0 !important; }
-        }
-      `}</style>
-
-      <div style={{ display: "flex", minHeight: "100vh" }}>
-        <aside
-          className="pc-sidebar"
-          style={{
-            width: 290,
-            flexShrink: 0,
-            borderRight: "1px solid rgba(255,255,255,0.08)",
-            background: "linear-gradient(180deg, #24221e 0%, #1f1d19 100%)",
-            display: "flex",
-            flexDirection: "column"
-          }}
-        >
-          <div style={{ padding: 14, borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 34, height: 34, borderRadius: 10, background: "#0f0f0f", display: "grid", placeItems: "center", color: "#fff" }}>
-              <PlayIcon />
-            </div>
-            <div style={{ fontSize: 18, fontWeight: 600, color: "#f1ebe2" }}>Playcraft</div>
-          </div>
-
-          <div style={{ padding: 12 }}>
-            <ActionButton label="New chat" icon={<PlusIcon />} onClick={createChat} />
-          </div>
-
-          <div style={{ padding: "6px 16px 10px", color: "#8c857b", fontSize: 12, fontWeight: 600, letterSpacing: 0.2 }}>RECENT CHATS</div>
-
-          <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 14px" }}>
-            {chats.map((chat) => {
-              const active = chat.id === activeId;
-              const hovered = hoveredChatId === chat.id;
-              return (
-                <div
-                  key={chat.id}
-                  style={{ position: "relative", marginBottom: 4 }}
-                  onMouseEnter={() => setHoveredChatId(chat.id)}
-                  onMouseLeave={() => setHoveredChatId(null)}
-                >
-                  <button
-                    onClick={() => {
-                      setActiveId(chat.id);
-                      setPreviewHtml("");
-                      setOpenChatMenuId(null);
-                    }}
-                    style={{
-                      width: "100%",
-                      minHeight: 44,
-                      border: "none",
-                      borderRadius: 12,
-                      background: active || hovered ? "rgba(0,0,0,0.38)" : "transparent",
-                      color: active ? "#f3eee5" : "#d8d0c5",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      cursor: "pointer",
-                      padding: "10px 12px",
-                      textAlign: "left",
-                      transition: "background 120ms ease"
-                    }}
-                  >
-                    <span style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 14 }}>{chat.title}</span>
-                    {(active || hovered || openChatMenuId === chat.id) && (
-                      <span
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setOpenChatMenuId(openChatMenuId === chat.id ? null : chat.id);
-                        }}
-                        style={{ display: "flex", color: "#b4ad9f", padding: 3 }}
-                      >
-                        <DotsIcon />
-                      </span>
-                    )}
-                  </button>
-
-                  {openChatMenuId === chat.id && (
-                    <div style={{ position: "absolute", right: 8, top: 44, width: 160, borderRadius: 16, padding: 8, background: "#2f2c28", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 20px 50px rgba(0,0,0,0.34)", zIndex: 20 }}>
-                      <MenuButton label="Rename" onClick={() => renameChat(chat.id)} icon={<PencilIcon />} />
-                      <MenuButton label="Delete" onClick={() => deleteChat(chat.id)} icon={<TrashIcon />} danger />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </aside>
-
-        <main className="pc-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-          <div style={{ height: 56, borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 24px", color: "#e7e0d5" }}>
-            <div style={{ fontSize: 20, fontWeight: 600 }}>Playcraft</div>
-            {previewHtml ? <ActionButton label="Open preview" onClick={() => setPreviewHtml(previewHtml)} /> : <div />}
-          </div>
-
-          <div style={{ flex: 1, overflowY: "auto", paddingBottom: 190 }}>
-            <div style={{ width: "min(880px, 100%)", margin: "0 auto", padding: "28px 28px 0" }}>
-              {!renderedMessages.length ? (
-                <div style={{ minHeight: "46vh", display: "grid", placeItems: "center", color: "#9d968c", fontSize: 15 }}>
-                  Ask anything, paste code, or attach files.
-                </div>
-              ) : (
-                renderedMessages.map((msg) => (
-                  msg.role === "user" ? (
-                    <UserMessage key={msg.id} msg={msg} />
-                  ) : (
-                    <AssistantMessage
-                      key={msg.id}
-                      msg={msg}
-                      loading={loading}
-                      onCopyMessage={() => copyMessage(msg.content || "")}
-                      onPreviewHtml={(html) => setPreviewHtml(html)}
-                      onCopyHtml={copyHtml}
-                      onDownloadHtml={downloadHtml}
-                      onRepairHtml={repairHtml}
-                      onRetry={() => retryAssistant(msg.id)}
-                      onLike={() => setToast("Saved") }
-                      onDislike={() => setToast("Noted") }
-                    />
-                  )
-                ))
-              )}
-              <div ref={bottomRef} style={{ height: 4 }} />
-            </div>
-          </div>
-
-          <div className="pc-composer" style={{ position: "fixed", left: 290, right: 0, bottom: 0, padding: "0 22px 22px", background: "linear-gradient(180deg, rgba(35,33,29,0) 0%, rgba(35,33,29,0.9) 26%, rgba(35,33,29,1) 100%)" }}>
-            <div style={{ width: "min(880px, calc(100vw - 44px))", margin: "0 auto", borderRadius: 22, border: "1px solid rgba(255,255,255,0.08)", background: "#3a3732", boxShadow: "0 12px 40px rgba(0,0,0,0.26)", padding: 16 }}>
-              {!!attachments.length && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-                  {attachments.map((file, index) => (
-                    <AttachmentPill key={file.id || index} file={file} onRemove={() => setAttachments((prev) => prev.filter((item) => item.id !== file.id))} />
-                  ))}
-                </div>
-              )}
-
-              <textarea
-                ref={textareaRef}
-                rows={1}
-                value={input}
-                onChange={(event) => {
-                  setInput(event.target.value);
-                  requestAnimationFrame(updateTextareaHeight);
-                }}
-                onKeyDown={onKeyDown}
-                disabled={loading}
-                placeholder="Ask anything, paste code, ask for ESP32, Arduino, games, or follow-up..."
-                style={{ width: "100%", border: "none", outline: "none", resize: "none", background: "transparent", color: "#f4eee4", fontSize: 16, lineHeight: 1.7, minHeight: 96, maxHeight: 220 }}
-              />
-
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
-                <IconButton icon={<PaperclipIcon />} onClick={() => fileInputRef.current?.click()} title="Add files" active />
-                <div style={{ marginLeft: "auto", color: "#c7c0b4", fontSize: 13, paddingRight: 6 }}>Playcraft AI</div>
-                {loading ? (
-                  <ActionButton label="Stop" onClick={stopGeneration} primary icon={<StopIcon />} />
-                ) : (
-                  <ActionButton label="Send" onClick={() => sendMessage()} primary disabled={!canSend} icon={<ArrowUpIcon />} />
-                )}
-              </div>
-            </div>
-          </div>
-        </main>
-      </div>
-
-      <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => addFiles(event.target.files)} />
-
-      {!!previewHtml && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.58)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-          <div style={{ width: "min(1200px, 96vw)", height: "min(820px, 92vh)", borderRadius: 24, background: "#1f1d19", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 40px 120px rgba(0,0,0,0.46)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            <div style={{ height: 64, borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 18px", gap: 14, flexWrap: "wrap" }}>
-              <div style={{ color: "#f3ede4", fontSize: 16, fontWeight: 600 }}>Live preview</div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <ActionButton label="Copy HTML" onClick={() => copyHtml(previewHtml)} />
-                <ActionButton label="Download" onClick={() => downloadHtml(previewHtml)} />
-                <ActionButton label="Repair" onClick={() => repairHtml(previewHtml)} disabled={loading} />
-                <ActionButton label="Close" onClick={() => setPreviewHtml("")} />
-              </div>
-            </div>
-            <div style={{ flex: 1, background: "#111" }}>
-              <iframe title="Game preview" srcDoc={previewHtml} style={{ width: "100%", height: "100%", border: "none", background: "#111" }} sandbox="allow-scripts allow-same-origin" />
-            </div>
+    <div
+      className="appShell"
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
+      {dragging ? (
+        <div className="dragOverlay">
+          <div className="dragCard">
+            <div className="dragEmoji">📎</div>
+            <div className="dragTitle">Drop files here</div>
+            <div className="dragSub">Images, code, notes, screenshots</div>
           </div>
         </div>
-      )}
+      ) : null}
 
-      {!!toast && (
-        <div style={{ position: "fixed", right: 22, bottom: 24, padding: "10px 14px", borderRadius: 12, background: "#111", color: "#f5efe6", border: "1px solid rgba(255,255,255,0.08)", zIndex: 90 }}>{toast}</div>
-      )}
+      <aside className="sidebar">
+        <div className="brand">Playcraft</div>
+
+        <div className="sidebarActions">
+          <button className="primaryBtn" onClick={() => createChatNow()} type="button">New chat</button>
+          <button className="secondaryBtn" onClick={createProjectNow} type="button">New project</button>
+        </div>
+
+        <div className="projectList">
+          {projects.map((project) => {
+            const activeProjectNow = project.id === activeProjectId;
+            return (
+              <div key={project.id} className="projectCard">
+                <div className={`projectHeader ${activeProjectNow ? "active" : ""}`}>
+                  <button
+                    className="projectButton"
+                    type="button"
+                    onClick={() => {
+                      setActiveProjectId(project.id);
+                      setActiveChatId(project.chats[0]?.id || null);
+                    }}
+                  >
+                    <span className="projectName">{project.name}</span>
+                    <span className="projectCount">{project.chats.length}</span>
+                  </button>
+                  <div className="rowActions">
+                    <button className="iconBtn" onClick={() => createChatNow(project.id)} type="button">＋</button>
+                    <button className="iconBtn" onClick={() => renameProject(project.id)} type="button">✎</button>
+                  </div>
+                </div>
+
+                {activeProjectNow ? (
+                  <div className="chatList">
+                    {project.chats.map((chat) => {
+                      const activeChatNow = chat.id === activeChatId;
+                      return (
+                        <div key={chat.id} className={`chatRow ${activeChatNow ? "active" : ""}`}>
+                          <button
+                            className="chatButton"
+                            type="button"
+                            onClick={() => {
+                              setActiveProjectId(project.id);
+                              setActiveChatId(chat.id);
+                            }}
+                          >
+                            {chat.title}
+                          </button>
+                          <div className="rowActions small">
+                            <button className="iconBtn" onClick={() => renameChat(chat.id)} type="button">✎</button>
+                            {project.chats.length > 1 ? (
+                              <button className="iconBtn danger" onClick={() => removeChat(chat.id)} type="button">✕</button>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </aside>
+
+      <main className="mainPanel">
+        <header className="topbar">
+          <div>
+            <div className="topTitle">{activeProject?.name || "Playcraft"}</div>
+            <div className="topSub">
+              {activeChat?.mode === "study" ? "Study and learn mode" : "Smart build mode"} · web search auto · drag files in
+            </div>
+          </div>
+          {activeChat?.mode === "study" ? <div className="modeBadge">Study</div> : null}
+        </header>
+
+        <section className="messagesPane" ref={messagesRef}>
+          {!activeChat?.messages?.length ? (
+            <div className="emptyState">
+              <div className="emptyTitle">Ask for code, games, ESP32, design, or research</div>
+              <div className="emptySub">
+                It can chat normally, study with you, analyze screenshots, and search the web when needed.
+              </div>
+            </div>
+          ) : (
+            activeChat.messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)
+          )}
+        </section>
+
+        <div className="composerWrap">
+          {attachments.length ? (
+            <div className="attachmentTray">
+              {attachments.map((file, index) => (
+                <AttachmentPill
+                  key={file.id}
+                  file={file}
+                  onRemove={() => setAttachments((prev) => prev.filter((_, i) => i !== index))}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {error ? <div className="errorBar">{error}</div> : null}
+
+          <div className="composer">
+            <div className="composerLeft">
+              <button className="plusBtn" type="button" onClick={() => setShowPlusMenu((v) => !v)}>＋</button>
+              {showPlusMenu ? (
+                <div className="plusMenu">
+                  <button type="button" onClick={() => fileInputRef.current?.click()}>Add file</button>
+                  <button type="button" onClick={setStudyMode}>
+                    {activeChat?.mode === "study" ? "Back to normal chat" : "Study and learn"}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            <textarea
+              ref={textareaRef}
+              className="composerInput"
+              value={text}
+              onChange={(e) => {
+                setText(e.target.value);
+                e.target.style.height = "56px";
+                e.target.style.height = `${Math.min(e.target.scrollHeight, 220)}px`;
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              placeholder="Ask anything, drag in a screenshot, paste code, or ask to search the web..."
+            />
+
+            <div className="composerRight">
+              {sending ? (
+                <button className="stopBtn" type="button" onClick={stop}>Stop</button>
+              ) : (
+                <button className="sendBtn" type="button" onClick={send}>↑</button>
+              )}
+            </div>
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => e.target.files && attachFiles(e.target.files)}
+          />
+        </div>
+      </main>
+
+      <style jsx>{`
+        :global(html, body) {
+          margin: 0;
+          padding: 0;
+          background: #171513;
+          color: #f5efe6;
+          font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+        :global(*) { box-sizing: border-box; }
+        .appShell {
+          height: 100vh;
+          display: flex;
+          overflow: hidden;
+          background: radial-gradient(circle at top left, rgba(215,164,91,0.12), transparent 28%), #171513;
+          position: relative;
+        }
+        .sidebar {
+          width: 286px;
+          flex-shrink: 0;
+          border-right: 1px solid rgba(255,255,255,0.08);
+          padding: 20px 14px 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          background: rgba(16,15,14,0.78);
+          backdrop-filter: blur(14px);
+          position: sticky;
+          top: 0;
+          height: 100vh;
+          overflow: auto;
+        }
+        .brand { font-size: 22px; font-weight: 800; letter-spacing: -0.03em; }
+        .sidebarActions { display: grid; gap: 8px; }
+        .primaryBtn, .secondaryBtn {
+          width: 100%; border: 0; border-radius: 14px; padding: 12px 14px; cursor: pointer; font-size: 14px; font-weight: 700;
+        }
+        .primaryBtn { background: #f5efe6; color: #171513; }
+        .secondaryBtn { background: rgba(255,255,255,0.06); color: #f5efe6; }
+        .projectList { display: flex; flex-direction: column; gap: 10px; overflow: auto; padding-bottom: 28px; }
+        .projectCard { border-radius: 16px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); }
+        .projectHeader { display: flex; align-items: center; justify-content: space-between; padding: 8px; border-radius: 16px; }
+        .projectHeader.active { background: rgba(255,255,255,0.05); }
+        .projectButton { flex: 1; background: transparent; color: inherit; border: 0; text-align: left; padding: 6px 8px; cursor: pointer; }
+        .projectName { display: block; font-size: 14px; font-weight: 700; }
+        .projectCount { display: block; font-size: 12px; color: rgba(245,239,230,0.55); margin-top: 3px; }
+        .rowActions { display: flex; align-items: center; gap: 6px; }
+        .rowActions.small { opacity: 0; transition: opacity .15s ease; }
+        .chatRow:hover .rowActions.small, .chatRow.active .rowActions.small { opacity: 1; }
+        .iconBtn {
+          width: 28px; height: 28px; border-radius: 10px; border: 0; cursor: pointer;
+          background: transparent; color: rgba(245,239,230,0.75);
+        }
+        .iconBtn:hover { background: rgba(255,255,255,0.08); color: #fff; }
+        .iconBtn.danger:hover { background: rgba(255,92,92,0.12); color: #ff8e8e; }
+        .chatList { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 4px; }
+        .chatRow {
+          display: flex; align-items: center; gap: 8px; padding: 4px; border-radius: 12px;
+        }
+        .chatRow.active, .chatRow:hover { background: rgba(255,255,255,0.05); }
+        .chatButton { flex: 1; background: transparent; border: 0; color: inherit; text-align: left; padding: 8px 10px; cursor: pointer; font-size: 13px; }
+        .mainPanel { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100vh; }
+        .topbar {
+          padding: 20px 28px 14px; border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: space-between; gap: 16px;
+          backdrop-filter: blur(12px); background: rgba(23,21,19,0.72);
+        }
+        .topTitle { font-size: 20px; font-weight: 800; }
+        .topSub { font-size: 13px; color: rgba(245,239,230,0.6); margin-top: 4px; }
+        .modeBadge { padding: 8px 12px; border-radius: 999px; background: rgba(215,164,91,0.15); color: #ffd797; font-size: 12px; font-weight: 700; }
+        .messagesPane { flex: 1; overflow: auto; padding: 24px 28px 180px; }
+        .emptyState {
+          max-width: 760px; margin: 12vh auto 0; text-align: center; padding: 28px; border-radius: 28px;
+          border: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.03);
+        }
+        .emptyTitle { font-size: 28px; line-height: 1.15; font-weight: 800; }
+        .emptySub { color: rgba(245,239,230,0.68); font-size: 15px; line-height: 1.7; margin-top: 10px; }
+        .messageRow { max-width: 960px; margin: 0 auto 18px; display: flex; gap: 14px; align-items: flex-start; }
+        .avatar {
+          width: 34px; height: 34px; border-radius: 12px; display: grid; place-items: center; font-size: 13px; font-weight: 800;
+          background: rgba(255,255,255,0.08); color: #fff; flex-shrink: 0;
+        }
+        .messageBody { flex: 1; min-width: 0; }
+        .messageHeader { font-size: 12px; color: rgba(245,239,230,0.55); margin-bottom: 8px; }
+        .messageFiles { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+        .bubble { border-radius: 20px; padding: 16px 18px; border: 1px solid rgba(255,255,255,0.08); }
+        .userBubble { background: rgba(255,255,255,0.07); }
+        .assistantBubble { background: rgba(255,255,255,0.03); }
+        .bubbleText { white-space: pre-wrap; line-height: 1.75; font-size: 15px; }
+        .sourcesWrap { margin-top: 10px; }
+        .sourcesTitle { font-size: 12px; color: rgba(245,239,230,0.5); margin-bottom: 6px; }
+        .sourcesList { display: flex; flex-wrap: wrap; gap: 8px; }
+        .sourceItem {
+          display: inline-flex; align-items: center; gap: 8px; text-decoration: none; color: #f5efe6;
+          padding: 8px 10px; border-radius: 999px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.06);
+          max-width: 100%;
+        }
+        .sourceIndex {
+          width: 18px; height: 18px; border-radius: 999px; display: grid; place-items: center;
+          background: rgba(215,164,91,0.18); color: #ffd797; font-size: 11px; font-weight: 800;
+        }
+        .sourceText { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+        .composerWrap {
+          position: sticky; bottom: 0; padding: 10px 28px 24px; background: linear-gradient(to top, rgba(23,21,19,0.98), rgba(23,21,19,0.84), transparent);
+        }
+        .composer { max-width: 960px; margin: 0 auto; position: relative; display: flex; gap: 12px; align-items: flex-end; padding: 14px; border-radius: 28px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 20px 60px rgba(0,0,0,0.25); }
+        .composerLeft, .composerRight { flex-shrink: 0; position: relative; }
+        .composerInput {
+          flex: 1; min-height: 56px; max-height: 220px; resize: none; border: 0; outline: none; background: transparent; color: #f5efe6; font-size: 16px; line-height: 1.6; padding: 8px 0;
+        }
+        .composerInput::placeholder { color: rgba(245,239,230,0.45); }
+        .plusBtn, .sendBtn, .stopBtn {
+          border: 0; cursor: pointer; border-radius: 18px; height: 52px; min-width: 52px; padding: 0 16px; font-weight: 800; font-size: 16px;
+        }
+        .plusBtn { background: rgba(0,0,0,0.28); color: #fff; }
+        .sendBtn { background: #f5efe6; color: #171513; }
+        .stopBtn { background: rgba(255,92,92,0.12); color: #ffb1b1; }
+        .plusMenu {
+          position: absolute; bottom: 64px; left: 0; min-width: 190px; border-radius: 18px; overflow: hidden;
+          background: #25211d; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 14px 40px rgba(0,0,0,0.35);
+        }
+        .plusMenu button {
+          width: 100%; background: transparent; color: #f5efe6; border: 0; text-align: left; padding: 14px 14px; cursor: pointer; font-size: 14px;
+        }
+        .plusMenu button:hover { background: rgba(255,255,255,0.06); }
+        .attachmentTray { max-width: 960px; margin: 0 auto 12px; display: flex; flex-wrap: wrap; gap: 10px; }
+        .attachmentPill {
+          display: inline-flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 16px;
+          background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); min-width: 0;
+        }
+        .attachmentThumb { width: 40px; height: 40px; object-fit: cover; border-radius: 10px; }
+        .attachmentIcon { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: rgba(255,255,255,0.08); }
+        .attachmentMeta { min-width: 0; }
+        .attachmentName { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+        .attachmentSize { font-size: 11px; color: rgba(245,239,230,0.5); margin-top: 2px; }
+        .tinyGhost { border: 0; background: transparent; color: rgba(245,239,230,0.6); cursor: pointer; }
+        .typingDots { display: inline-flex; gap: 6px; align-items: center; height: 18px; }
+        .typingDots span {
+          width: 7px; height: 7px; border-radius: 999px; background: rgba(245,239,230,0.75); animation: jump 1s infinite ease-in-out;
+        }
+        .typingDots span:nth-child(2) { animation-delay: .12s; }
+        .typingDots span:nth-child(3) { animation-delay: .24s; }
+        .dragOverlay {
+          position: fixed; inset: 0; z-index: 50; background: rgba(10,10,10,0.55); display: grid; place-items: center;
+          backdrop-filter: blur(6px);
+        }
+        .dragCard { padding: 30px 34px; border-radius: 28px; border: 1px solid rgba(255,255,255,0.1); background: #211c18; text-align: center; }
+        .dragEmoji { font-size: 38px; }
+        .dragTitle { margin-top: 10px; font-size: 22px; font-weight: 800; }
+        .dragSub { margin-top: 6px; font-size: 14px; color: rgba(245,239,230,0.6); }
+        .errorBar { max-width: 960px; margin: 0 auto 10px; color: #ffb1b1; font-size: 13px; }
+        @keyframes jump {
+          0%, 80%, 100% { transform: translateY(0); opacity: .45; }
+          40% { transform: translateY(-6px); opacity: 1; }
+        }
+        @media (max-width: 900px) {
+          .sidebar { width: 240px; }
+          .topTitle { font-size: 18px; }
+        }
+      `}</style>
     </div>
   );
 }
-
-function MenuButton({ label, onClick, icon, danger = false }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        width: "100%",
-        border: "none",
-        background: "transparent",
-        color: danger ? "#f08a80" : "#ece6dc",
-        borderRadius: 10,
-        height: 38,
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        cursor: "pointer",
-        padding: "0 10px",
-        textAlign: "left"
-      }}
-    >
-      <span style={{ width: 16, display: "flex", justifyContent: "center" }}>{icon}</span>
-      <span>{label}</span>
-    </button>
-  );
-}
-
-function Spinner() {
-  return (
-    <div style={{ width: 18, height: 18, borderRadius: 999, border: "2px solid rgba(255,255,255,0.22)", borderTopColor: "#d17947", animation: "spin 0.8s linear infinite" }} />
-  );
-}
-
-function Svg({ width = 18, height = 18, viewBox = "0 0 24 24", children }) {
-  return <svg width={width} height={height} viewBox={viewBox} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
-}
-
-function PlayIcon() { return <Svg width={18} height={18}><path d="m8 5 11 7-11 7V5Z" /></Svg>; }
-function PlusIcon() { return <Svg width={16} height={16}><path d="M12 5v14" /><path d="M5 12h14" /></Svg>; }
-function DotsIcon() { return <Svg width={16} height={16}><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></Svg>; }
-function PencilIcon() { return <Svg width={16} height={16}><path d="M12 3a2.1 2.1 0 0 1 3 3L7 14l-4 1 1-4 8-8Z" /></Svg>; }
-function TrashIcon() { return <Svg width={16} height={16}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M18 6l-1 14H7L6 6" /></Svg>; }
-function PaperclipIcon() { return <Svg width={16} height={16}><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></Svg>; }
-function StopIcon() { return <Svg width={16} height={16}><rect x="6" y="6" width="12" height="12" rx="2" /></Svg>; }
-function ArrowUpIcon() { return <Svg width={16} height={16}><path d="M12 19V5" /><path d="m6 11 6-6 6 6" /></Svg>; }
-function CopyIcon() { return <Svg width={16} height={16}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></Svg>; }
-function ThumbUpIcon() { return <Svg width={16} height={16}><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3m6-4V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.68l1.38-9A2 2 0 0 0 18.68 9H13Z" /></Svg>; }
-function ThumbDownIcon() { return <Svg width={16} height={16}><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3m-6 4v2a3 3 0 0 0 3 3l4-9V2H6.72a2 2 0 0 0-2 1.68l-1.38 9A2 2 0 0 0 5.32 15H11Z" /></Svg>; }
-function RefreshIcon() { return <Svg width={16} height={16}><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" /><path d="M8 16H3v5" /></Svg>; }
