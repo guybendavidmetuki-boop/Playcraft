@@ -61,35 +61,50 @@ function extractFiles(text: string) {
   };
 }
 
+function latestUserText(messages: ApiMessage[]) {
+  const user = [...messages].reverse().find((m) => m.role === "user");
+  const parts: string[] = [];
+  if (user?.text) parts.push(user.text);
+  for (const f of user?.files || []) {
+    if (f.kind === "text" && f.text) parts.push(f.text.slice(0, 5000));
+  }
+  return parts.join("\n\n");
+}
+
+function hasImageAttachment(messages: ApiMessage[]) {
+  return messages.some((m) => (m.files || []).some((f) => f.kind === "image" && !!f.base64));
+}
+
 function wantsGame(text: string) {
-  return /(game|wordle|snake|platformer|maze|arcade|rpg|tetris|משחק|וורדל|סנייק|פלטפורמה|מבוך|אימה)/i.test(text || "");
+  return /(game|wordle|snake|platformer|maze|arcade|rpg|tetris|runner|puzzle|horror|roguelike|vampire survivors|משחק|וורדל|סנייק|פלטפורמה|מבוך|אימה|פאזל|מרוץ|יריות)/i.test(text || "");
 }
 
 function wantsCode(text: string) {
-  return /(code|source|snippet|arduino|esp32|javascript|typescript|react|html|css|js|ts|קוד|ארדואינו|סקץ)/i.test(text || "");
+  return /(code|source|snippet|arduino|esp32|javascript|typescript|react|html|css|js|ts|c\+\+|סקץ|קוד|ארדואינו|מקור)/i.test(text || "");
 }
 
-function wantsFile(text: string) {
-  return /(file|download|zip|index\.html|project files|קובץ|קבצים|להורדה|זיפ)/i.test(text || "");
+function wantsFileExplicit(text: string) {
+  return /(file|download|zip|index\.html|project files|open in browser|קובץ|קבצים|להורדה|זיפ|html מלא|קובץ html)/i.test(text || "");
 }
 
-function wantsImage(mode: string, text: string) {
-  return mode === "image" || /(image|draw|illustration|artwork|תמונה|ציור|אילוסטרציה|צור תמונה)/i.test(text || "");
+function wantsImageGeneration(mode: string, text: string, hasImage: boolean) {
+  const explicit = /(create image|generate image|make an image|draw|illustration|artwork|צור תמונה|תיצור תמונה|תמונה חדשה|תצייר)/i.test(text || "");
+  const designCopyIntent = /(like this|same style|match this|copy this design|based on this screenshot|same ui|כמו התמונה|כמו המסך|כמו זה|אותו עיצוב|אותו סגנון|תעתיק את העיצוב|תבנה לפי התמונה)/i.test(text || "");
+  if (hasImage && designCopyIntent) return false;
+  return mode === "image" || explicit;
+}
+
+function maybeWrapHtmlAsFile(text: string) {
+  const codeMatch = text.match(/```(?:html)?\n([\s\S]*?)```/i);
+  if (!codeMatch) return null;
+  const code = codeMatch[1].trim();
+  if (!/<html|<canvas|<script|<!doctype/i.test(code)) return null;
+  return { name: "index.html", mime: "text/html;charset=utf-8", content: code };
 }
 
 function pollinationsUrl(prompt: string) {
-  const q = encodeURIComponent(`${prompt}. high quality, beautiful composition, polished details, modern style`);
+  const q = encodeURIComponent(`${prompt}. beautiful, polished, vivid, premium quality, modern composition`);
   return `https://image.pollinations.ai/prompt/${q}?width=1024&height=1024&nologo=true`;
-}
-
-function latestUserText(messages: ApiMessage[]) {
-  const user = [...messages].reverse().find((m) => m.role === "user");
-  const pieces: string[] = [];
-  if (user?.text) pieces.push(user.text);
-  for (const f of user?.files || []) {
-    if (f.kind === "text" && f.text) pieces.push(f.text.slice(0, 5000));
-  }
-  return pieces.join("\n\n");
 }
 
 function buildMessages(messages: ApiMessage[]) {
@@ -100,13 +115,18 @@ function buildMessages(messages: ApiMessage[]) {
     const textParts: string[] = [];
     if (m.mode && m.mode !== "chat") textParts.push(`Mode: ${m.mode}`);
     if (m.text) textParts.push(clean(m.text));
+
     for (const f of m.files || []) {
       if (f.kind === "image" && f.base64) {
-        parts.push({ type: "image_url", image_url: { url: `data:${f.mime || "image/jpeg"};base64,${f.base64}` } });
+        parts.push({
+          type: "image_url",
+          image_url: { url: `data:${f.mime || "image/jpeg"};base64,${f.base64}` },
+        });
       } else if (f.kind === "text") {
         textParts.push(`Attached file: ${f.name}${f.truncated ? " (truncated)" : ""}\n\n${f.text || ""}`);
       }
     }
+
     const finalText = textParts.join("\n\n").trim() || "Hello";
     if (!parts.length) return { role: "user", content: finalText };
     return { role: "user", content: [{ type: "text", text: finalText }, ...parts] };
@@ -123,22 +143,15 @@ async function callGroq({ apiKey, model, system, messages }: { apiKey: string; m
     body: JSON.stringify({
       model,
       messages: [{ role: "system", content: system }, ...messages],
-      temperature: 0.35,
+      temperature: 0.28,
       max_completion_tokens: 4096,
       tools: model.startsWith("groq/compound") ? [{ type: "web_search" }] : undefined,
     }),
   });
+
   const data = await resp.json();
   if (!resp.ok) throw new Error(data?.error?.message || data?.message || "Groq request failed.");
   return clean(data?.choices?.[0]?.message?.content || "");
-}
-
-function maybeWrapHtmlAsFile(text: string) {
-  const codeMatch = text.match(/```(?:html)?\n([\s\S]*?)```/i);
-  if (!codeMatch) return null;
-  const code = codeMatch[1].trim();
-  if (!/<html|<canvas|<script|<!doctype/i.test(code)) return null;
-  return { name: "index.html", mime: "text/html;charset=utf-8", content: code };
 }
 
 export async function POST(req: Request) {
@@ -154,58 +167,85 @@ export async function POST(req: Request) {
     }
 
     const latestText = latestUserText(messages);
+    const imageAttached = hasImageAttachment(messages);
+
     const languageRule = hasHebrew(latestText)
       ? "Reply in Hebrew unless the user explicitly asks for another language."
       : "Reply in the same language as the user. If the user writes in Hebrew, reply in Hebrew.";
 
-    if (wantsImage(mode, latestText)) {
+    if (wantsImageGeneration(mode, latestText, imageAttached)) {
       const imagePrompt = latestText || (hasHebrew(latestText) ? "תמונה יפה" : "beautiful image");
       return NextResponse.json({
-        text: hasHebrew(latestText)
-          ? "הכנתי לך תמונה לפי הבקשה."
-          : "I made an image based on your request.",
-        imageUrl: pollinationsUrl(imagePrompt),
+        text: hasHebrew(latestText) ? "הכנתי לך תמונה לפי הבקשה." : "I created an image based on your request.",
         files: [],
+        imageUrl: pollinationsUrl(imagePrompt),
       });
     }
 
-    const system = `You are Playcraft AI.
+    const system = `You are Playcraft AI, a very strong assistant for chat, coding, games, design-copying from screenshots, ESP32, Arduino IDE, and web work.
 
 ${languageRule}
 
-GLOBAL
-- Be practical, fast, and well organized.
-- Use short sections and clean formatting.
-- For normal chat: answer naturally and clearly.
-- For current information or references: use web search when useful.
-- If the user uploads a screenshot, analyze concrete visual details.
+GLOBAL BEHAVIOR
+- Be smart, practical, fast, and beautifully organized.
+- Understand the user's intent automatically. Do not ask unnecessary questions if you can infer sensible defaults.
+- If the user asks for current info, trends, examples, references, or inspiration, use web search when useful.
+- If the user writes in Hebrew, keep the whole answer in Hebrew.
+- Use clear sections, short paragraphs, and a neat structure.
+- When giving code, the code must be production-like, clean, and not sloppy.
 
-MODES
-- Chat mode: normal smart assistant.
-- Study mode: teach clearly, step by step, in simple language.
-- Build mode: strong at games, code, UI ideas, product ideas.
-
-FILES AND CODE
-- Only create files when needed.
-- Non-game coding tasks like ESP32 / Arduino IDE: short explanation + fenced code blocks, unless the user explicitly asks for a file.
-- If the user explicitly asks for code, do not create files by default.
-- If the user explicitly asks for a file, downloadable project, or html file, use <file name="..." mime="...">...</file>.
+SCREENSHOT / DESIGN-COPY MODE
+- If the user attached a screenshot, UI image, game image, or app mockup AND asks for a design, game, page, or code based on it, DO NOT try to create a new image.
+- Instead, analyze the screenshot carefully and copy it as closely as possible in structure, spacing, component sizes, hierarchy, colors, alignment, mood, and polish.
+- Mention briefly what you recognized from the screenshot, then build from it.
+- Prefer exactness over generic creativity when the user asks for "like the screenshot".
 
 GAMES
-- IMPORTANT: for game requests, the default is SHORT explanation first, then a downloadable file.
-- So if the user asks for a game and does not explicitly ask for code only, create a game file by default.
-- Prefer a single self-contained index.html for web games unless the user asks otherwise.
-- If the user asks for game code, give short explanation + fenced code blocks instead of files.
-- Do not talk ABOUT the default. Actually do it.
+- For game requests, make the game as polished and beautiful as reasonably possible.
+- Prioritize good UX, good logic, nice spacing, nice colors, responsive layout, smooth interactions, and a premium feel.
+- The game should not feel like a rough prototype unless the user asks for something very simple.
+- Default behavior for game requests: SHORT explanation first, then a downloadable/openable file.
+- If the user explicitly asks for game code, return SHORT explanation + fenced code blocks instead of files.
+- If the user explicitly asks for a file or html game, return a file.
+- Prefer one self-contained index.html unless the user asks otherwise.
+- Never explain the default behavior. Just do it.
 
-FORMAT
-- Use markdown for normal text.
-- Use fenced code blocks only when not returning file tags.
-- Keep explanations outside file tags.
-- If you create a file, keep the explanation short and helpful.`;
+WORDLE SPECIAL RULES
+- If the user asks for Wordle or a Wordle-like game, make sure it includes:
+  1) on-screen keyboard
+  2) physical keyboard support
+  3) Enter key support
+  4) Backspace support
+  5) proper guess validation flow
+  6) win and lose states
+  7) neat tile layout
+  8) nice styling and animation
+  9) clean mobile-friendly layout
+- The logic must feel complete, not half-broken.
 
-    const hasImage = messages.some((m) => (m.files || []).some((f) => f.kind === "image"));
-    const selectedModel = hasImage ? "meta-llama/llama-4-scout-17b-16e-instruct" : model;
+ESP32 / ARDUINO
+- For ESP32 / Arduino IDE requests, default to: short explanation + code block.
+- Only create a file if the user explicitly asks for a file.
+- Keep hardware instructions simple and practical.
+
+FILES AND OUTPUT RULES
+- For normal chat, do not create files.
+- For non-game coding tasks, do not create files unless explicitly asked.
+- For game requests, create a file by default unless the user asks for code.
+- If creating files, use this exact format:
+<file name="index.html" mime="text/html;charset=utf-8">
+...full file content...
+</file>
+- Keep any explanation outside the file tag.
+- If returning code instead of a file, use fenced code blocks.
+
+STYLE
+- Answers should look clean and well thought out.
+- Be specific, not generic.
+- If the user asks for something beautiful, premium, modern, cute, dark, colorful, joyful, elegant, arcade-like, etc., reflect that style in the output.
+`;
+
+    const selectedModel = imageAttached ? "meta-llama/llama-4-scout-17b-16e-instruct" : model;
     const raw = await callGroq({ apiKey, model: selectedModel, system, messages: buildMessages(messages) });
 
     const imagePrompt = extractTag(raw, "image_prompt");
@@ -218,8 +258,8 @@ FORMAT
       if (wrapped) {
         files = [wrapped];
         text = hasHebrew(latestText)
-          ? "הנה קובץ המשחק עם הסבר קצר. אפשר לפתוח אותו בדפדפן או להוריד."
-          : "Here is the game file with a short explanation. You can open it in the browser or download it.";
+          ? "הנה המשחק עם הסבר קצר. אפשר לפתוח אותו בדפדפן או להוריד."
+          : "Here is the game with a short explanation. You can open it in the browser or download it.";
       }
     }
 
