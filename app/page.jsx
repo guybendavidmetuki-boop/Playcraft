@@ -2,38 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-const uid = () => Math.random().toString(36).slice(2, 9);
+const uid = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 const TEXT_EXTENSIONS = [
   ".txt", ".md", ".json", ".js", ".jsx", ".ts", ".tsx", ".css", ".html", ".htm",
   ".xml", ".csv", ".yml", ".yaml", ".py", ".java", ".c", ".cpp", ".cs", ".php",
   ".rb", ".go", ".rs", ".swift", ".sql", ".sh"
-];
-
-const NAV_ITEMS = [
-  { id: "search", label: "Search", icon: SearchIcon },
-  { id: "customize", label: "Customize", icon: SlidersIcon },
-  { id: "chats", label: "Chats", icon: ChatBubbleIcon },
-  { id: "projects", label: "Projects", icon: BriefcaseIcon },
-  { id: "artifacts", label: "Artifacts", icon: SparklesIcon },
-  { id: "code", label: "Code", icon: CodeIcon }
-];
-
-const STARTER_PROMPTS = [
-  "Build a polished Snake game in a single HTML file",
-  "Create a top-down shooter with score, restart, and difficulty scaling",
-  "Make a Tetris clone with keyboard controls and a clean HUD",
-  "Fix my current game and improve controls, polish, and feel"
-];
-
-const QUICK_ACTIONS = [
-  { label: "Add files or photos", icon: PaperclipIcon },
-  { label: "Add to project", icon: FolderPlusIcon, hasArrow: true },
-  { label: "Skills", icon: GridIcon, hasArrow: true },
-  { label: "Add connectors", icon: PlugIcon },
-  { label: "Web search", icon: GlobeIcon, selected: true },
-  { label: "Use style", icon: BrushIcon, hasArrow: true }
 ];
 
 function isProbablyTextFile(file) {
@@ -82,22 +57,6 @@ function cleanReplyForDisplay(text = "") {
     .trim();
 }
 
-function downloadTextFile(filename, text) {
-  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-async function copyToClipboard(text) {
-  if (!text) return false;
-  await navigator.clipboard.writeText(text);
-  return true;
-}
-
 function readFileForUi(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -128,233 +87,192 @@ function readTextFile(file) {
   });
 }
 
-function SpinnerFlower() {
+function downloadTextFile(filename, text) {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function copyToClipboard(text) {
+  if (!text) return false;
+  await navigator.clipboard.writeText(text);
+  return true;
+}
+
+function ActionButton({ label, onClick, primary = false, danger = false, disabled = false, icon }) {
   return (
-    <div style={{ position: "relative", width: 26, height: 26 }}>
-      {Array.from({ length: 8 }).map((_, i) => (
-        <span
-          key={i}
-          style={{
-            position: "absolute",
-            left: "50%",
-            top: "50%",
-            width: 3,
-            height: 11,
-            borderRadius: 999,
-            background: i % 2 === 0 ? "#d67a45" : "#f0a06a",
-            transform: `translate(-50%, -50%) rotate(${i * 45}deg) translateY(-9px)`,
-            opacity: 0.35 + (i / 16),
-            animation: "petalPulse 1s ease-in-out infinite",
-            animationDelay: `${i * 70}ms`
-          }}
-        />
-      ))}
+    <button
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        height: 38,
+        padding: "0 14px",
+        borderRadius: 12,
+        border: primary ? "none" : `1px solid ${danger ? "rgba(233,110,98,0.45)" : "rgba(255,255,255,0.1)"}`,
+        background: primary ? "#d17947" : danger ? "rgba(233,110,98,0.1)" : "#2e2b27",
+        color: primary ? "#fff" : danger ? "#f08a80" : "#ebe5da",
+        cursor: disabled ? "default" : "pointer",
+        fontSize: 13,
+        fontWeight: 500,
+        opacity: disabled ? 0.6 : 1,
+        boxShadow: primary ? "0 8px 24px rgba(209,121,71,0.28)" : "none"
+      }}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function IconButton({ icon, onClick, title, active = false, danger = false, disabled = false }) {
+  return (
+    <button
+      title={title}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      style={{
+        width: 34,
+        height: 34,
+        borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.08)",
+        background: active ? "rgba(0,0,0,0.42)" : "transparent",
+        color: danger ? "#f08a80" : "#cfc7bc",
+        display: "grid",
+        placeItems: "center",
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.6 : 1
+      }}
+    >
+      {icon}
+    </button>
+  );
+}
+
+function AttachmentPill({ file, onRemove }) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "8px 10px",
+        borderRadius: 12,
+        background: "rgba(255,255,255,0.05)",
+        border: "1px solid rgba(255,255,255,0.08)",
+        color: "#d7d0c5",
+        fontSize: 12
+      }}
+    >
+      <span style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
+      <button
+        onClick={onRemove}
+        style={{ border: "none", background: "transparent", color: "#b7aea1", cursor: "pointer", fontSize: 14 }}
+      >
+        ✕
+      </button>
     </div>
   );
 }
 
-function CodeAttachmentCard({ html, onPreview, onCopy, onDownload }) {
+function CodeCard({ html, onPreview, onCopy, onDownload, onRepair, busy }) {
   return (
     <div
       style={{
         marginTop: 14,
         borderRadius: 18,
         border: "1px solid rgba(255,255,255,0.08)",
-        background: "linear-gradient(180deg, rgba(45,44,41,0.86) 0%, rgba(34,33,31,0.98) 100%)",
-        display: "flex",
-        alignItems: "stretch",
-        overflow: "hidden",
-        minHeight: 94
+        background: "#2a2723",
+        overflow: "hidden"
       }}
     >
-      <div
-        style={{
-          width: 92,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          borderRight: "1px solid rgba(255,255,255,0.06)",
-          background: "linear-gradient(180deg, rgba(58,56,51,0.45), rgba(31,30,28,0.2))"
-        }}
-      >
-        <div
-          style={{
-            width: 54,
-            height: 72,
-            borderRadius: 14,
-            border: "1px solid rgba(255,255,255,0.08)",
-            background: "linear-gradient(180deg, rgba(54,52,48,0.95), rgba(35,34,31,0.95))",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#9d9890"
-          }}
-        >
-          <CodeIcon />
+      <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <div>
+          <div style={{ color: "#f4eee4", fontSize: 15, fontWeight: 600 }}>game.html</div>
+          <div style={{ color: "#a79f93", fontSize: 12, marginTop: 4 }}>Generated playable game file</div>
         </div>
+        <ActionButton label="Open preview" onClick={() => onPreview(html)} />
       </div>
-
-      <div style={{ flex: 1, padding: "18px 18px 16px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <div>
-            <div style={{ color: "#f3efe8", fontSize: 16, fontWeight: 500 }}>game.html</div>
-            <div style={{ color: "#a7a096", fontSize: 13, marginTop: 4 }}>Code · HTML game ready</div>
-          </div>
-          <button
-            onClick={() => onPreview(html)}
-            style={{
-              border: "1px solid rgba(255,255,255,0.14)",
-              background: "rgba(255,255,255,0.02)",
-              color: "#f2eee7",
-              padding: "12px 18px",
-              borderRadius: 14,
-              fontSize: 13,
-              cursor: "pointer",
-              whiteSpace: "nowrap"
-            }}
-          >
-            Open preview
-          </button>
-        </div>
-
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
-          <MiniActionButton label="Copy code" onClick={onCopy} />
-          <MiniActionButton label="Download" onClick={onDownload} />
-        </div>
+      <div style={{ padding: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <ActionButton label="Copy code" onClick={() => onCopy(html)} />
+        <ActionButton label="Download" onClick={() => onDownload(html)} />
+        <ActionButton label="Repair" onClick={() => onRepair(html)} disabled={busy} />
       </div>
     </div>
   );
 }
 
-function MiniActionButton({ label, onClick }) {
+function MessageActions({ onCopy, onLike, onDislike, onRetry, canRetry }) {
   return (
-    <button
-      onClick={onClick}
-      style={{
-        border: "1px solid rgba(255,255,255,0.1)",
-        background: "rgba(255,255,255,0.02)",
-        color: "#cbc4ba",
-        padding: "8px 12px",
-        borderRadius: 12,
-        fontSize: 12,
-        cursor: "pointer"
-      }}
-    >
-      {label}
-    </button>
+    <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+      <IconButton icon={<CopyIcon />} onClick={onCopy} title="Copy" />
+      <IconButton icon={<ThumbUpIcon />} onClick={onLike} title="Like" />
+      <IconButton icon={<ThumbDownIcon />} onClick={onDislike} title="Dislike" />
+      <IconButton icon={<RefreshIcon />} onClick={onRetry} title="Try again" disabled={!canRetry} />
+    </div>
   );
 }
 
-function ChatMessage({ msg, onPreviewHtml, onCopyHtml, onDownloadHtml }) {
-  const isUser = msg.role === "user";
-
-  if (isUser) {
+function AssistantMessage({ msg, onCopyMessage, onPreviewHtml, onCopyHtml, onDownloadHtml, onRepairHtml, onRetry, onLike, onDislike, loading }) {
+  if (msg.pending) {
     return (
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 36 }}>
-        <div
-          style={{
-            maxWidth: 660,
-            background: "#0b0b0b",
-            color: "#f6f1ea",
-            padding: "18px 22px",
-            borderRadius: 18,
-            boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
-            fontSize: 15,
-            lineHeight: 1.75,
-            whiteSpace: "pre-wrap"
-          }}
-        >
-          {msg.content}
-          {!!msg.files?.length && (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-              {msg.files.map((file) => (
-                <div
-                  key={file.id}
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: 12,
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    color: "#d0c8bc",
-                    background: "rgba(255,255,255,0.04)",
-                    fontSize: 12
-                  }}
-                >
-                  📎 {file.name}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#c6beb2", marginBottom: 28 }}>
+        <Spinner />
+        <span>Working…</span>
       </div>
     );
   }
 
   return (
-    <div style={{ marginBottom: 34 }}>
-      {msg.pending ? (
-        <div style={{ paddingTop: 10 }}>
-          <SpinnerFlower />
-        </div>
-      ) : (
-        <>
-          {!!msg.summary && (
-            <div style={{ color: "#a9a297", fontSize: 14, marginBottom: 12 }}>
-              {msg.summary}
-            </div>
-          )}
+    <div style={{ marginBottom: 30 }}>
+      {!!msg.summary && <div style={{ color: "#a79f93", fontSize: 13, marginBottom: 10 }}>{msg.summary}</div>}
+      <div style={{ color: "#ece6dc", fontSize: 15, lineHeight: 1.9, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{msg.content}</div>
 
-          <div
-            style={{
-              color: "#ece6dc",
-              fontSize: 15,
-              lineHeight: 1.9,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word"
-            }}
-          >
-            {msg.content}
-          </div>
-
-          {!!msg.generatedHtml && (
-            <CodeAttachmentCard
-              html={msg.generatedHtml}
-              onPreview={onPreviewHtml}
-              onCopy={() => onCopyHtml(msg.generatedHtml)}
-              onDownload={() => onDownloadHtml(msg.generatedHtml)}
-            />
-          )}
-
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 20, color: "#9c968e" }}>
-            <GhostIconButton><CopySmallIcon /></GhostIconButton>
-            <GhostIconButton><ThumbUpIcon /></GhostIconButton>
-            <GhostIconButton><ThumbDownIcon /></GhostIconButton>
-            <GhostIconButton><RefreshIcon /></GhostIconButton>
-          </div>
-        </>
+      {!!msg.generatedHtml && (
+        <CodeCard
+          html={msg.generatedHtml}
+          onPreview={onPreviewHtml}
+          onCopy={onCopyHtml}
+          onDownload={onDownloadHtml}
+          onRepair={onRepairHtml}
+          busy={loading}
+        />
       )}
+
+      <MessageActions
+        onCopy={onCopyMessage}
+        onLike={onLike}
+        onDislike={onDislike}
+        onRetry={onRetry}
+        canRetry
+      />
     </div>
   );
 }
 
-function GhostIconButton({ children, onClick }) {
+function UserMessage({ msg }) {
   return (
-    <button
-      onClick={onClick}
-      style={{
-        width: 30,
-        height: 30,
-        borderRadius: 999,
-        border: "none",
-        background: "transparent",
-        color: "#9d968d",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: onClick ? "pointer" : "default"
-      }}
-    >
-      {children}
-    </button>
+    <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 30 }}>
+      <div style={{ maxWidth: 720, background: "#0c0c0c", color: "#f4eee6", padding: "16px 18px", borderRadius: 18, lineHeight: 1.75, fontSize: 15, boxShadow: "0 8px 30px rgba(0,0,0,0.18)", whiteSpace: "pre-wrap" }}>
+        {msg.content}
+        {!!msg.files?.length && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+            {msg.files.map((file) => (
+              <div key={file.id} style={{ padding: "8px 10px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)", fontSize: 12, color: "#d9d2c6" }}>
+                📎 {file.name}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -365,15 +283,13 @@ export default function App() {
   const [attachments, setAttachments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [previewHtml, setPreviewHtml] = useState("");
-  const [showQuickMenu, setShowQuickMenu] = useState(false);
   const [openChatMenuId, setOpenChatMenuId] = useState(null);
   const [hoveredChatId, setHoveredChatId] = useState(null);
   const [toast, setToast] = useState("");
 
-  const bottomRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
-  const quickMenuRef = useRef(null);
+  const bottomRef = useRef(null);
   const abortRef = useRef(null);
 
   const activeChat = chats.find((chat) => chat.id === activeId);
@@ -389,22 +305,19 @@ export default function App() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeChat?.messages?.length, loading]);
+  }, [activeChat?.messages?.length, previewHtml, loading]);
 
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(() => setToast(""), 1800);
-    return () => clearTimeout(timer);
+    const t = setTimeout(() => setToast(""), 1800);
+    return () => clearTimeout(t);
   }, [toast]);
 
-  useEffect(() => {
-    function onClickOutside(event) {
-      if (quickMenuRef.current && !quickMenuRef.current.contains(event.target)) {
-        setShowQuickMenu(false);
-      }
-    }
-    document.addEventListener("mousedown", onClickOutside);
-    return () => document.removeEventListener("mousedown", onClickOutside);
+  const updateTextareaHeight = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
   }, []);
 
   const createChat = useCallback(() => {
@@ -415,14 +328,21 @@ export default function App() {
     setAttachments([]);
     setPreviewHtml("");
     setOpenChatMenuId(null);
-    setShowQuickMenu(false);
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
 
-  const deleteChat = useCallback((id) => {
+  const renameChat = useCallback((chatId) => {
+    const current = chats.find((c) => c.id === chatId);
+    const nextTitle = window.prompt("New chat name", current?.title || "");
+    if (!nextTitle?.trim()) return;
+    setChats((prev) => prev.map((chat) => (chat.id === chatId ? { ...chat, title: nextTitle.trim() } : chat)));
+    setOpenChatMenuId(null);
+  }, [chats]);
+
+  const deleteChat = useCallback((chatId) => {
     setChats((prev) => {
-      const next = prev.filter((chat) => chat.id !== id);
-      if (activeId === id) {
+      const next = prev.filter((chat) => chat.id !== chatId);
+      if (chatId === activeId) {
         setActiveId(next[0]?.id || null);
         setPreviewHtml("");
       }
@@ -431,15 +351,10 @@ export default function App() {
     setOpenChatMenuId(null);
   }, [activeId]);
 
-  const updateTextareaHeight = useCallback(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 220)}px`;
-  }, []);
-
   const addFiles = useCallback(async (fileList) => {
     const files = Array.from(fileList || []);
+    if (!files.length) return;
+
     const loaded = await Promise.all(files.map(async (file) => {
       const uiFile = await readFileForUi(file);
       if (isProbablyTextFile(file)) {
@@ -455,15 +370,51 @@ export default function App() {
     setAttachments((prev) => [...prev, ...loaded]);
   }, []);
 
-  const sendMessage = useCallback(async (overrideText) => {
-    const text = typeof overrideText === "string" ? overrideText.trim() : input.trim();
-    if ((!text && !attachments.length) || loading || !activeId) return;
+  const requestAssistantReply = useCallback(async ({ history, assistantId }) => {
+    abortRef.current = new AbortController();
+
+    const resp = await fetch("/api/playcraft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: history }),
+      signal: abortRef.current.signal
+    });
+
+    const json = await resp.json();
+    if (!resp.ok || json?.error) {
+      throw new Error(json?.error || `Request failed with status ${resp.status}`);
+    }
+
+    const reply = cleanReplyForDisplay(json.reply || "") || json.summary || "Done.";
+    const summary = json.summary || extractSummaryFromReply(json.reply || "");
+    const generatedHtml = json.generatedHtml || extractHtmlFromReply(json.reply || "");
+
+    setChats((prev) => prev.map((chat) => {
+      if (chat.id !== activeId) return chat;
+      return {
+        ...chat,
+        messages: chat.messages.map((message) => (
+          message.id === assistantId ? { ...message, pending: false, content: reply, summary, generatedHtml } : message
+        ))
+      };
+    }));
+
+    if (generatedHtml) setPreviewHtml(generatedHtml);
+  }, [activeId]);
+
+  const sendMessage = useCallback(async (override = null) => {
+    if (loading || !activeId) return;
+
+    const text = typeof override?.text === "string" ? override.text.trim() : input.trim();
+    const files = Array.isArray(override?.files) ? override.files : attachments;
+
+    if (!text && !files.length) return;
 
     const userMessage = {
       id: uid(),
       role: "user",
       content: text,
-      files: [...attachments],
+      files: [...files],
       time: now()
     };
 
@@ -482,50 +433,18 @@ export default function App() {
 
     setChats((prev) => prev.map((chat) => {
       if (chat.id !== activeId) return chat;
-      const title = chat.messages.length === 0 && text
-        ? text.slice(0, 42) + (text.length > 42 ? "…" : "")
-        : chat.title;
+      const title = !chat.messages.length && text ? text.slice(0, 42) + (text.length > 42 ? "…" : "") : chat.title;
       return { ...chat, title, messages: [...chat.messages, userMessage, pendingMessage] };
     }));
 
     setInput("");
     setAttachments([]);
     setLoading(true);
-    setShowQuickMenu(false);
     setOpenChatMenuId(null);
-    abortRef.current = new AbortController();
     if (textareaRef.current) textareaRef.current.style.height = "auto";
 
     try {
-      const resp = await fetch("/api/playcraft", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history }),
-        signal: abortRef.current.signal
-      });
-
-      const json = await resp.json();
-      if (!resp.ok || json?.error) {
-        throw new Error(json?.error || `Request failed with status ${resp.status}`);
-      }
-
-      const reply = cleanReplyForDisplay(json.reply || "") || json.summary || "Done.";
-      const summary = json.summary || extractSummaryFromReply(json.reply || "");
-      const generatedHtml = json.generatedHtml || extractHtmlFromReply(json.reply || "");
-
-      setChats((prev) => prev.map((chat) => {
-        if (chat.id !== activeId) return chat;
-        return {
-          ...chat,
-          messages: chat.messages.map((message) => (
-            message.id === pendingId
-              ? { ...message, pending: false, content: reply, summary, generatedHtml }
-              : message
-          ))
-        };
-      }));
-
-      if (generatedHtml) setPreviewHtml(generatedHtml);
+      await requestAssistantReply({ history, assistantId: pendingId });
     } catch (error) {
       const aborted = error?.name === "AbortError";
       setChats((prev) => prev.map((chat) => {
@@ -549,27 +468,83 @@ export default function App() {
       abortRef.current = null;
       setLoading(false);
     }
-  }, [activeChat?.messages, activeId, attachments, input, loading]);
+  }, [activeChat?.messages, activeId, attachments, input, loading, requestAssistantReply]);
+
+  const retryAssistant = useCallback(async (assistantId) => {
+    if (loading || !activeChat) return;
+
+    const index = activeChat.messages.findIndex((message) => message.id === assistantId);
+    if (index <= 0) return;
+
+    const history = activeChat.messages.slice(0, index).filter((message) => message.role === "user" || message.role === "assistant");
+
+    setChats((prev) => prev.map((chat) => {
+      if (chat.id !== activeId) return chat;
+      return {
+        ...chat,
+        messages: chat.messages.map((message) => (
+          message.id === assistantId
+            ? { ...message, pending: true, content: "", summary: "", generatedHtml: "" }
+            : message
+        ))
+      };
+    }));
+
+    setLoading(true);
+    try {
+      await requestAssistantReply({ history, assistantId });
+    } catch (error) {
+      const aborted = error?.name === "AbortError";
+      setChats((prev) => prev.map((chat) => {
+        if (chat.id !== activeId) return chat;
+        return {
+          ...chat,
+          messages: chat.messages.map((message) => (
+            message.id === assistantId
+              ? {
+                  ...message,
+                  pending: false,
+                  content: aborted ? "Stopped." : `⚠️ ${error?.message || "Something went wrong."}`,
+                  summary: "",
+                  generatedHtml: ""
+                }
+              : message
+          ))
+        };
+      }));
+    } finally {
+      abortRef.current = null;
+      setLoading(false);
+    }
+  }, [activeChat, activeId, loading, requestAssistantReply]);
 
   const stopGeneration = useCallback(() => {
     abortRef.current?.abort();
   }, []);
 
-  const sendRepairRequest = useCallback(() => {
-    if (!previewHtml || loading) return;
-    sendMessage("Repair the current game, keep the core idea, improve controls, polish, UX, restart flow, and fix any logic issues.");
-  }, [loading, previewHtml, sendMessage]);
+  const repairHtml = useCallback((html) => {
+    if (!html || loading) return;
+    sendMessage({
+      text: "Repair the current game. Keep the same core idea, fix bugs, improve controls, polish the UI, and return the full HTML again.",
+      files: [{ id: uid(), name: "game.html", type: "text/html", text: html }]
+    });
+  }, [loading, sendMessage]);
 
-  const onKeyDown = useCallback((e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
+  const onKeyDown = useCallback((event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
       sendMessage();
     }
   }, [sendMessage]);
 
+  const copyMessage = useCallback(async (text) => {
+    const ok = await copyToClipboard(text);
+    setToast(ok ? "Copied" : "Copy failed");
+  }, []);
+
   const copyHtml = useCallback(async (html) => {
     const ok = await copyToClipboard(html);
-    setToast(ok ? "Copied" : "Copy failed");
+    setToast(ok ? "Code copied" : "Copy failed");
   }, []);
 
   const downloadHtml = useCallback((html) => {
@@ -587,24 +562,19 @@ export default function App() {
         body { color: #f5efe6; }
         button, input, textarea { font-family: inherit; }
         textarea::placeholder { color: #9d968c; }
-        @keyframes petalPulse {
-          0%, 100% { opacity: 0.25; }
-          50% { opacity: 1; }
-        }
-        @media (max-width: 1080px) {
-          .gf-sidebar { display: none !important; }
-          .gf-main { width: 100% !important; }
-          .gf-composer-wrap { padding-left: 18px !important; padding-right: 18px !important; }
-          .gf-message-shell { width: 100% !important; max-width: 100% !important; padding-left: 18px !important; padding-right: 18px !important; }
-          .gf-title-row { padding-left: 18px !important; padding-right: 18px !important; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (max-width: 960px) {
+          .pc-sidebar { display: none !important; }
+          .pc-main { width: 100% !important; }
+          .pc-composer { left: 0 !important; }
         }
       `}</style>
 
-      <div style={{ display: "flex", minHeight: "100vh", position: "relative" }}>
+      <div style={{ display: "flex", minHeight: "100vh" }}>
         <aside
-          className="gf-sidebar"
+          className="pc-sidebar"
           style={{
-            width: 308,
+            width: 290,
             flexShrink: 0,
             borderRight: "1px solid rgba(255,255,255,0.08)",
             background: "linear-gradient(180deg, #24221e 0%, #1f1d19 100%)",
@@ -612,353 +582,165 @@ export default function App() {
             flexDirection: "column"
           }}
         >
-          <div style={{ height: 48, borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", padding: "0 12px", gap: 12, color: "#bdb6ac" }}>
-            <SquareSplitIcon />
-            <ArrowLeftIcon />
-            <ArrowRightIcon />
+          <div style={{ padding: 14, borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, background: "#0f0f0f", display: "grid", placeItems: "center", color: "#fff" }}>
+              <PlayIcon />
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: "#f1ebe2" }}>Playcraft</div>
           </div>
 
           <div style={{ padding: 12 }}>
-            <button
-              onClick={createChat}
-              style={{
-                width: "100%",
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                background: "#121212",
-                border: "1px solid rgba(255,255,255,0.08)",
-                color: "#f5f0e7",
-                padding: "12px 14px",
-                borderRadius: 12,
-                fontSize: 17,
-                cursor: "pointer",
-                justifyContent: "flex-start"
-              }}
-            >
-              <CirclePlusIcon />
-              <span>New chat</span>
-              <span style={{ marginLeft: "auto", color: "#aaa295", display: "flex", gap: 8 }}>
-                <LinkSmallIcon />
-                <SparklesTinyIcon />
-              </span>
-            </button>
+            <ActionButton label="New chat" icon={<PlusIcon />} onClick={createChat} />
           </div>
 
-          <div style={{ padding: "0 8px" }}>
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
+          <div style={{ padding: "6px 16px 10px", color: "#8c857b", fontSize: 12, fontWeight: 600, letterSpacing: 0.2 }}>RECENT CHATS</div>
+
+          <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 14px" }}>
+            {chats.map((chat) => {
+              const active = chat.id === activeId;
+              const hovered = hoveredChatId === chat.id;
               return (
-                <button
-                  key={item.id}
-                  style={{
-                    width: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 14,
-                    padding: "12px 10px",
-                    background: "transparent",
-                    border: "none",
-                    color: "#ece6dc",
-                    fontSize: 18,
-                    cursor: "pointer",
-                    borderRadius: 12,
-                    textAlign: "left"
-                  }}
+                <div
+                  key={chat.id}
+                  style={{ position: "relative", marginBottom: 4 }}
+                  onMouseEnter={() => setHoveredChatId(chat.id)}
+                  onMouseLeave={() => setHoveredChatId(null)}
                 >
-                  <Icon />
-                  <span>{item.label}</span>
-                </button>
+                  <button
+                    onClick={() => {
+                      setActiveId(chat.id);
+                      setPreviewHtml("");
+                      setOpenChatMenuId(null);
+                    }}
+                    style={{
+                      width: "100%",
+                      minHeight: 44,
+                      border: "none",
+                      borderRadius: 12,
+                      background: active || hovered ? "rgba(0,0,0,0.38)" : "transparent",
+                      color: active ? "#f3eee5" : "#d8d0c5",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      cursor: "pointer",
+                      padding: "10px 12px",
+                      textAlign: "left",
+                      transition: "background 120ms ease"
+                    }}
+                  >
+                    <span style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 14 }}>{chat.title}</span>
+                    {(active || hovered || openChatMenuId === chat.id) && (
+                      <span
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setOpenChatMenuId(openChatMenuId === chat.id ? null : chat.id);
+                        }}
+                        style={{ display: "flex", color: "#b4ad9f", padding: 3 }}
+                      >
+                        <DotsIcon />
+                      </span>
+                    )}
+                  </button>
+
+                  {openChatMenuId === chat.id && (
+                    <div style={{ position: "absolute", right: 8, top: 44, width: 160, borderRadius: 16, padding: 8, background: "#2f2c28", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 20px 50px rgba(0,0,0,0.34)", zIndex: 20 }}>
+                      <MenuButton label="Rename" onClick={() => renameChat(chat.id)} icon={<PencilIcon />} />
+                      <MenuButton label="Delete" onClick={() => deleteChat(chat.id)} icon={<TrashIcon />} danger />
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
-
-          <div style={{ padding: "18px 16px 10px", color: "#8c857b", fontSize: 13, fontWeight: 500 }}>Recents</div>
-
-          <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 12px" }}>
-            {chats.map((chat) => (
-              <div
-                key={chat.id}
-                style={{ position: "relative" }}
-                onMouseEnter={() => setHoveredChatId(chat.id)}
-                onMouseLeave={() => setHoveredChatId(null)}
-              >
-                <button
-                  onClick={() => {
-                    setActiveId(chat.id);
-                    setPreviewHtml("");
-                    setOpenChatMenuId(null);
-                  }}
-                  style={{
-                    width: "100%",
-                    marginBottom: 4,
-                    padding: "12px 10px",
-                    borderRadius: 12,
-                    border: "none",
-                    background: chat.id === activeId ? "#111111" : "transparent",
-                    color: chat.id === activeId ? "#f2ede4" : "#d8d1c7",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    cursor: "pointer",
-                    textAlign: "left"
-                  }}
-                >
-                  <span style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 14 }}>{chat.title}</span>
-                  {(hoveredChatId === chat.id || openChatMenuId === chat.id) && (
-                    <span
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setOpenChatMenuId(openChatMenuId === chat.id ? null : chat.id);
-                      }}
-                      style={{ color: "#b2ab9f", padding: 4, display: "flex" }}
-                    >
-                      <DotsIcon />
-                    </span>
-                  )}
-                </button>
-
-                {openChatMenuId === chat.id && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: 118,
-                      top: 38,
-                      width: 172,
-                      borderRadius: 16,
-                      border: "1px solid rgba(255,255,255,0.1)",
-                      background: "#302d29",
-                      boxShadow: "0 20px 50px rgba(0,0,0,0.35)",
-                      padding: 12,
-                      zIndex: 20
-                    }}
-                  >
-                    <SidebarMenuItem label="Star" icon={<StarIcon />} />
-                    <SidebarMenuItem label="Rename" icon={<PencilIcon />} />
-                    <SidebarMenuItem label="Add to project" icon={<FolderPlusIcon />} />
-                    <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "8px 0" }} />
-                    <SidebarMenuItem label="Delete" icon={<TrashRedIcon />} danger onClick={() => deleteChat(chat.id)} />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          <div style={{ padding: 14, borderTop: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 44, height: 44, borderRadius: 999, background: "#d9d4cc", color: "#26231f", display: "grid", placeItems: "center", fontWeight: 700 }}>G</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: "#f3eee5", fontSize: 16 }}>guy</div>
-              <div style={{ color: "#9f988d", fontSize: 14 }}>Free plan</div>
-            </div>
-            <div style={{ display: "flex", gap: 10, color: "#a59d92" }}>
-              <DownloadMiniIcon />
-              <ChevronUpSmall />
-            </div>
-          </div>
         </aside>
 
-        <main className="gf-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-          <div className="gf-title-row" style={{ height: 48, borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 42px", color: "#d4cec3" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 16 }}>
-              <span>Playcraft AI</span>
-              <ChevronDownIcon />
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 18, color: "#b5aea3" }}>
-              <ShareIcon />
-              <ReplyArrowIcon />
-            </div>
+        <main className="pc-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ height: 56, borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 24px", color: "#e7e0d5" }}>
+            <div style={{ fontSize: 20, fontWeight: 600 }}>Playcraft</div>
+            {previewHtml ? <ActionButton label="Open preview" onClick={() => setPreviewHtml(previewHtml)} /> : <div />}
           </div>
 
-          <div style={{ flex: 1, overflowY: "auto", paddingBottom: 240 }}>
-            <div className="gf-message-shell" style={{ width: "min(860px, 100%)", margin: "0 auto", padding: "28px 36px 0" }}>
+          <div style={{ flex: 1, overflowY: "auto", paddingBottom: 190 }}>
+            <div style={{ width: "min(880px, 100%)", margin: "0 auto", padding: "28px 28px 0" }}>
               {!renderedMessages.length ? (
-                <div style={{ paddingTop: 82 }}>
-                  <div style={{ display: "flex", justifyContent: "center" }}>
-                    <div style={{ maxWidth: 660, width: "100%", background: "#0b0b0b", borderRadius: 18, padding: "18px 22px", lineHeight: 1.7, fontSize: 15 }}>
-                      Tell me what game you want to build, repair, or restyle.
-                    </div>
-                  </div>
-
-                  <div style={{ marginTop: 44, color: "#e8e2d8", lineHeight: 1.9, fontSize: 15 }}>
-                    <div style={{ color: "#a59e92", marginBottom: 18 }}>Playcraft is ready to build, fix, and polish HTML5 games.</div>
-                    {STARTER_PROMPTS.map((prompt) => (
-                      <button
-                        key={prompt}
-                        onClick={() => {
-                          setInput(prompt);
-                          requestAnimationFrame(updateTextareaHeight);
-                          textareaRef.current?.focus();
-                        }}
-                        style={{
-                          display: "block",
-                          width: "100%",
-                          textAlign: "left",
-                          padding: "14px 16px",
-                          marginBottom: 10,
-                          borderRadius: 16,
-                          border: "1px solid rgba(255,255,255,0.08)",
-                          background: "rgba(255,255,255,0.03)",
-                          color: "#f0eadd",
-                          fontSize: 14,
-                          cursor: "pointer"
-                        }}
-                      >
-                        {prompt}
-                      </button>
-                    ))}
-                  </div>
+                <div style={{ minHeight: "46vh", display: "grid", placeItems: "center", color: "#9d968c", fontSize: 15 }}>
+                  Start a new game idea, paste code, or attach files.
                 </div>
               ) : (
                 renderedMessages.map((msg) => (
-                  <ChatMessage
-                    key={msg.id}
-                    msg={msg}
-                    onPreviewHtml={(html) => setPreviewHtml(html)}
-                    onCopyHtml={copyHtml}
-                    onDownloadHtml={downloadHtml}
-                  />
+                  msg.role === "user" ? (
+                    <UserMessage key={msg.id} msg={msg} />
+                  ) : (
+                    <AssistantMessage
+                      key={msg.id}
+                      msg={msg}
+                      loading={loading}
+                      onCopyMessage={() => copyMessage(msg.content || "")}
+                      onPreviewHtml={(html) => setPreviewHtml(html)}
+                      onCopyHtml={copyHtml}
+                      onDownloadHtml={downloadHtml}
+                      onRepairHtml={repairHtml}
+                      onRetry={() => retryAssistant(msg.id)}
+                      onLike={() => setToast("Saved") }
+                      onDislike={() => setToast("Noted") }
+                    />
+                  )
                 ))
               )}
-
               <div ref={bottomRef} style={{ height: 4 }} />
             </div>
           </div>
 
-          <div className="gf-composer-wrap" style={{ position: "fixed", left: 308, right: 0, bottom: 0, padding: "0 30px 22px", background: "linear-gradient(180deg, rgba(35,33,29,0) 0%, rgba(35,33,29,0.82) 24%, rgba(35,33,29,0.98) 100%)" }}>
-            <div style={{ width: "min(860px, calc(100vw - 60px))", margin: "0 auto", position: "relative" }}>
-              <div style={{ background: "#0b0b0b", color: "#ddd6cb", borderRadius: "16px 16px 0 0", padding: "14px 18px", fontSize: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>Ready to build or improve your next game</span>
-                <span style={{ textDecoration: "underline", cursor: "pointer" }}>Upgrade</span>
-              </div>
-
-              <div style={{ borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)", background: "#3a3834", padding: "16px 18px 16px", boxShadow: "0 10px 40px rgba(0,0,0,0.24)" }}>
-                {!!attachments.length && (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-                    {attachments.map((file, index) => (
-                      <div key={file.id || index} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 12, background: "rgba(255,255,255,0.06)", color: "#ece7de", fontSize: 12 }}>
-                        <span>{file.type?.startsWith("image/") ? "🖼️" : "📄"}</span>
-                        <span style={{ maxWidth: 190, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
-                        <button onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== index))} style={{ background: "transparent", border: "none", color: "#bdb6ad", cursor: "pointer" }}>✕</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <textarea
-                  ref={textareaRef}
-                  rows={1}
-                  value={input}
-                  disabled={loading}
-                  onChange={(e) => {
-                    setInput(e.target.value);
-                    updateTextareaHeight();
-                  }}
-                  onKeyDown={onKeyDown}
-                  placeholder="Describe the game, paste code, or ask for a follow-up…"
-                  style={{
-                    width: "100%",
-                    minHeight: 70,
-                    maxHeight: 220,
-                    resize: "none",
-                    border: "none",
-                    outline: "none",
-                    background: "transparent",
-                    color: "#f4eee6",
-                    fontSize: 16,
-                    lineHeight: 1.65,
-                    padding: 0
-                  }}
-                />
-
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 8 }}>
-                  <div style={{ position: "relative" }} ref={quickMenuRef}>
-                    <button
-                      onClick={() => setShowQuickMenu((prev) => !prev)}
-                      style={{ width: 38, height: 38, borderRadius: 12, border: "1px solid rgba(255,255,255,0.08)", background: "transparent", color: "#dfd8cd", display: "grid", placeItems: "center", cursor: "pointer" }}
-                    >
-                      <CirclePlusIcon size={18} />
-                    </button>
-
-                    {showQuickMenu && (
-                      <div style={{ position: "absolute", left: 0, bottom: 52, width: 246, borderRadius: 18, border: "1px solid rgba(255,255,255,0.1)", background: "#302d29", boxShadow: "0 24px 60px rgba(0,0,0,0.36)", padding: 12, zIndex: 40 }}>
-                        {QUICK_ACTIONS.map((item) => (
-                          <button
-                            key={item.label}
-                            onClick={() => {
-                              if (item.label === "Add files or photos") fileInputRef.current?.click();
-                              setShowQuickMenu(item.label === "Add files or photos" ? false : true);
-                            }}
-                            style={{
-                              width: "100%",
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 12,
-                              justifyContent: "space-between",
-                              padding: "12px 10px",
-                              borderRadius: 12,
-                              background: item.selected ? "rgba(51,109,255,0.08)" : "transparent",
-                              border: "none",
-                              color: item.selected ? "#5da3ff" : "#eee8de",
-                              fontSize: 14,
-                              cursor: "pointer"
-                            }}
-                          >
-                            <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                              <span style={{ width: 18, display: "flex", justifyContent: "center" }}><item.icon /></span>
-                              <span>{item.label}</span>
-                            </span>
-                            <span style={{ color: item.selected ? "#5da3ff" : "#a59e92" }}>
-                              {item.selected ? <CheckIcon /> : item.hasArrow ? <ChevronRightIcon /> : null}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{ marginLeft: "auto", color: "#cfc8bc", fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
-                    <span>Sonnet 4.6 Extended</span>
-                    <ChevronDownIcon small />
-                  </div>
-
-                  {loading ? (
-                    <button
-                      onClick={stopGeneration}
-                      style={{ width: 38, height: 38, borderRadius: 12, border: "none", background: "#d67a45", color: "#fff", display: "grid", placeItems: "center", cursor: "pointer" }}
-                      title="Stop"
-                    >
-                      <StopIcon />
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => sendMessage()}
-                      disabled={!canSend}
-                      style={{ width: 38, height: 38, borderRadius: 12, border: "none", background: canSend ? "#d67a45" : "#635f59", color: canSend ? "#fff" : "#c2bbb1", display: "grid", placeItems: "center", cursor: canSend ? "pointer" : "default" }}
-                    >
-                      <ArrowUpIcon />
-                    </button>
-                  )}
+          <div className="pc-composer" style={{ position: "fixed", left: 290, right: 0, bottom: 0, padding: "0 22px 22px", background: "linear-gradient(180deg, rgba(35,33,29,0) 0%, rgba(35,33,29,0.9) 26%, rgba(35,33,29,1) 100%)" }}>
+            <div style={{ width: "min(880px, calc(100vw - 44px))", margin: "0 auto", borderRadius: 22, border: "1px solid rgba(255,255,255,0.08)", background: "#3a3732", boxShadow: "0 12px 40px rgba(0,0,0,0.26)", padding: 16 }}>
+              {!!attachments.length && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                  {attachments.map((file, index) => (
+                    <AttachmentPill key={file.id || index} file={file} onRemove={() => setAttachments((prev) => prev.filter((item) => item.id !== file.id))} />
+                  ))}
                 </div>
-              </div>
+              )}
 
-              <div style={{ textAlign: "center", color: "#999186", fontSize: 13, paddingTop: 12 }}>Playcraft can make mistakes. Review generated code before shipping.</div>
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={input}
+                onChange={(event) => {
+                  setInput(event.target.value);
+                  requestAnimationFrame(updateTextareaHeight);
+                }}
+                onKeyDown={onKeyDown}
+                disabled={loading}
+                placeholder="Describe the game, paste code, or ask a follow-up..."
+                style={{ width: "100%", border: "none", outline: "none", resize: "none", background: "transparent", color: "#f4eee4", fontSize: 16, lineHeight: 1.7, minHeight: 96, maxHeight: 220 }}
+              />
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+                <IconButton icon={<PaperclipIcon />} onClick={() => fileInputRef.current?.click()} title="Add files" active />
+                <div style={{ marginLeft: "auto", color: "#c7c0b4", fontSize: 13, paddingRight: 6 }}>Claude Sonnet</div>
+                {loading ? (
+                  <ActionButton label="Stop" onClick={stopGeneration} primary icon={<StopIcon />} />
+                ) : (
+                  <ActionButton label="Send" onClick={() => sendMessage()} primary disabled={!canSend} icon={<ArrowUpIcon />} />
+                )}
+              </div>
             </div>
           </div>
         </main>
       </div>
 
-      <input ref={fileInputRef} type="file" multiple hidden onChange={(e) => addFiles(e.target.files)} />
+      <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => addFiles(event.target.files)} />
 
       {!!previewHtml && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.56)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-          <div style={{ width: "min(1200px, 96vw)", height: "min(820px, 92vh)", borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)", background: "#1f1d19", overflow: "hidden", boxShadow: "0 40px 120px rgba(0,0,0,0.46)", display: "flex", flexDirection: "column" }}>
-            <div style={{ height: 62, borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 18px" }}>
-              <div style={{ color: "#f3ede4", fontSize: 16 }}>Live preview</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <MiniActionButton label="Copy HTML" onClick={() => copyHtml(previewHtml)} />
-                <MiniActionButton label="Download" onClick={() => downloadHtml(previewHtml)} />
-                <MiniActionButton label="Repair + improve" onClick={sendRepairRequest} />
-                <button onClick={() => setPreviewHtml("")} style={{ width: 38, height: 38, borderRadius: 12, border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "#e7e1d7", cursor: "pointer" }}>✕</button>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.58)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div style={{ width: "min(1200px, 96vw)", height: "min(820px, 92vh)", borderRadius: 24, background: "#1f1d19", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 40px 120px rgba(0,0,0,0.46)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            <div style={{ height: 64, borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 18px", gap: 14, flexWrap: "wrap" }}>
+              <div style={{ color: "#f3ede4", fontSize: 16, fontWeight: 600 }}>Live preview</div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <ActionButton label="Copy HTML" onClick={() => copyHtml(previewHtml)} />
+                <ActionButton label="Download" onClick={() => downloadHtml(previewHtml)} />
+                <ActionButton label="Repair" onClick={() => repairHtml(previewHtml)} disabled={loading} />
+                <ActionButton label="Close" onClick={() => setPreviewHtml("")} />
               </div>
             </div>
             <div style={{ flex: 1, background: "#111" }}>
@@ -969,57 +751,56 @@ export default function App() {
       )}
 
       {!!toast && (
-        <div style={{ position: "fixed", right: 26, bottom: 26, background: "#111", color: "#f6f0e7", padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.08)", zIndex: 80 }}>{toast}</div>
+        <div style={{ position: "fixed", right: 22, bottom: 24, padding: "10px 14px", borderRadius: 12, background: "#111", color: "#f5efe6", border: "1px solid rgba(255,255,255,0.08)", zIndex: 90 }}>{toast}</div>
       )}
     </div>
   );
 }
 
-function SidebarMenuItem({ icon, label, danger = false, onClick }) {
+function MenuButton({ label, onClick, icon, danger = false }) {
   return (
-    <button onClick={onClick} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "10px 8px", border: "none", background: "transparent", color: danger ? "#ee7065" : "#ece6dc", fontSize: 14, cursor: "pointer", borderRadius: 10, textAlign: "left" }}>
-      <span style={{ width: 18, display: "flex", justifyContent: "center" }}>{icon}</span>
+    <button
+      onClick={onClick}
+      style={{
+        width: "100%",
+        border: "none",
+        background: "transparent",
+        color: danger ? "#f08a80" : "#ece6dc",
+        borderRadius: 10,
+        height: 38,
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        cursor: "pointer",
+        padding: "0 10px",
+        textAlign: "left"
+      }}
+    >
+      <span style={{ width: 16, display: "flex", justifyContent: "center" }}>{icon}</span>
       <span>{label}</span>
     </button>
   );
 }
 
-function Svg({ width = 18, height = 18, viewBox = "0 0 24 24", children, ...props }) {
-  return <svg width={width} height={height} viewBox={viewBox} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>{children}</svg>;
+function Spinner() {
+  return (
+    <div style={{ width: 18, height: 18, borderRadius: 999, border: "2px solid rgba(255,255,255,0.22)", borderTopColor: "#d17947", animation: "spin 0.8s linear infinite" }} />
+  );
 }
 
-function SquareSplitIcon() { return <Svg width={18} height={18}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M9 5v14" /></Svg>; }
-function ArrowLeftIcon() { return <Svg width={18} height={18}><path d="M15 18l-6-6 6-6" /><path d="M9 12h10" /></Svg>; }
-function ArrowRightIcon() { return <Svg width={18} height={18}><path d="M9 6l6 6-6 6" /><path d="M5 12h10" /></Svg>; }
-function SearchIcon() { return <Svg><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></Svg>; }
-function SlidersIcon() { return <Svg><path d="M4 21v-7" /><path d="M4 10V3" /><path d="M12 21v-9" /><path d="M12 8V3" /><path d="M20 21v-5" /><path d="M20 12V3" /><path d="M1 14h6" /><path d="M9 8h6" /><path d="M17 16h6" /></Svg>; }
-function ChatBubbleIcon() { return <Svg><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></Svg>; }
-function BriefcaseIcon() { return <Svg><rect x="3" y="7" width="18" height="13" rx="2" /><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M3 12h18" /></Svg>; }
-function SparklesIcon() { return <Svg><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z" /><path d="M5 19l.8 2.2L8 22l-2.2.8L5 25l-.8-2.2L2 22l2.2-.8L5 19Z" /><path d="M19 16l.7 1.8L21.5 18l-1.8.7L19 20.5l-.7-1.8-1.8-.7 1.8-.7L19 16Z" /></Svg>; }
-function CodeIcon() { return <Svg><path d="m8 9-4 3 4 3" /><path d="m16 9 4 3-4 3" /><path d="m14 5-4 14" /></Svg>; }
-function CirclePlusIcon({ size = 20 }) { return <Svg width={size} height={size}><circle cx="12" cy="12" r="10" /><path d="M12 8v8" /><path d="M8 12h8" /></Svg>; }
-function LinkSmallIcon() { return <Svg width={14} height={14}><path d="M10 13a5 5 0 0 1 0-7l1.2-1.2a5 5 0 0 1 7 7L17 13" /><path d="M14 11a5 5 0 0 1 0 7L12.8 19.2a5 5 0 1 1-7-7L7 11" /></Svg>; }
-function SparklesTinyIcon() { return <Svg width={14} height={14}><path d="M7 1l1.1 3L11 5 8.1 6 7 9 5.9 6 3 5l2.9-1L7 1Z" /></Svg>; }
+function Svg({ width = 18, height = 18, viewBox = "0 0 24 24", children }) {
+  return <svg width={width} height={height} viewBox={viewBox} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
+}
+
+function PlayIcon() { return <Svg width={18} height={18}><path d="m8 5 11 7-11 7V5Z" /></Svg>; }
+function PlusIcon() { return <Svg width={16} height={16}><path d="M12 5v14" /><path d="M5 12h14" /></Svg>; }
 function DotsIcon() { return <Svg width={16} height={16}><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></Svg>; }
-function StarIcon() { return <Svg width={16} height={16}><path d="m8 2 1.85 3.75L14 6.37l-3 2.92.7 4.13L8 11.5l-3.7 1.92.7-4.13-3-2.92 4.15-.62L8 2Z" /></Svg>; }
 function PencilIcon() { return <Svg width={16} height={16}><path d="M12 3a2.1 2.1 0 0 1 3 3L7 14l-4 1 1-4 8-8Z" /></Svg>; }
-function FolderPlusIcon() { return <Svg width={16} height={16}><path d="M3 6a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z" /><path d="M12 11v6" /><path d="M9 14h6" /></Svg>; }
-function TrashRedIcon() { return <Svg width={16} height={16}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M18 6l-1 14H7L6 6" /></Svg>; }
-function DownloadMiniIcon() { return <Svg width={18} height={18}><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M4 21h16" /></Svg>; }
-function ChevronUpSmall() { return <Svg width={16} height={16}><path d="m6 10 6-6 6 6" /></Svg>; }
-function ChevronDownIcon({ small = false }) { return <Svg width={small ? 14 : 16} height={small ? 14 : 16}><path d="m6 9 6 6 6-6" /></Svg>; }
-function ShareIcon() { return <Svg width={18} height={18}><path d="M16 8a3 3 0 1 0-2.83-4" /><path d="M4 12a3 3 0 1 0 2.83 4" /><path d="m7 13 9-5" /><path d="m7 11 9 5" /></Svg>; }
-function ReplyArrowIcon() { return <Svg width={18} height={18}><path d="m9 8-5 4 5 4" /><path d="M4 12h10a4 4 0 0 1 4 4v2" /></Svg>; }
-function CopySmallIcon() { return <Svg width={16} height={16}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></Svg>; }
+function TrashIcon() { return <Svg width={16} height={16}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M18 6l-1 14H7L6 6" /></Svg>; }
+function PaperclipIcon() { return <Svg width={16} height={16}><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></Svg>; }
+function StopIcon() { return <Svg width={16} height={16}><rect x="6" y="6" width="12" height="12" rx="2" /></Svg>; }
+function ArrowUpIcon() { return <Svg width={16} height={16}><path d="M12 19V5" /><path d="m6 11 6-6 6 6" /></Svg>; }
+function CopyIcon() { return <Svg width={16} height={16}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></Svg>; }
 function ThumbUpIcon() { return <Svg width={16} height={16}><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3m6-4V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.68l1.38-9A2 2 0 0 0 18.68 9H13Z" /></Svg>; }
 function ThumbDownIcon() { return <Svg width={16} height={16}><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3m-6 4v2a3 3 0 0 0 3 3l4-9V2H6.72a2 2 0 0 0-2 1.68l-1.38 9A2 2 0 0 0 5.32 15H11Z" /></Svg>; }
 function RefreshIcon() { return <Svg width={16} height={16}><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" /><path d="M8 16H3v5" /></Svg>; }
-function PaperclipIcon() { return <Svg width={16} height={16}><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></Svg>; }
-function GridIcon() { return <Svg width={16} height={16}><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></Svg>; }
-function PlugIcon() { return <Svg width={16} height={16}><path d="M12 22v-5" /><path d="M9 8V2" /><path d="M15 8V2" /><path d="M18 8H6v3a6 6 0 0 0 12 0V8Z" /></Svg>; }
-function GlobeIcon() { return <Svg width={16} height={16}><circle cx="12" cy="12" r="10" /><path d="M2 12h20" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z" /></Svg>; }
-function BrushIcon() { return <Svg width={16} height={16}><path d="m9 11-6 6v3h3l6-6" /><path d="m15 5 4 4" /><path d="M16 3a2.8 2.8 0 1 1 4 4l-9 9-4-4 9-9Z" /></Svg>; }
-function CheckIcon() { return <Svg width={14} height={14}><path d="m3 7 3 3 5-6" /></Svg>; }
-function ChevronRightIcon() { return <Svg width={14} height={14}><path d="m5 3 5 5-5 5" /></Svg>; }
-function StopIcon() { return <Svg width={16} height={16}><rect x="6" y="6" width="12" height="12" rx="2" /></Svg>; }
-function ArrowUpIcon() { return <Svg width={18} height={18}><path d="m12 19 0-14" /><path d="m6 11 6-6 6 6" /></Svg>; }
