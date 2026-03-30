@@ -74,7 +74,7 @@ function buildAnthropicMessages(messages: UiMessage[]) {
     if (message.role === "assistant") {
       return {
         role: "assistant",
-        content: message.content || ""
+        content: [{ type: "text", text: message.content || "" }]
       };
     }
 
@@ -114,17 +114,28 @@ function buildAnthropicMessages(messages: UiMessage[]) {
 
     return {
       role: "user",
-      content: parts.length === 1 && parts[0].type === "text" ? parts[0].text : parts
+      content: parts
     };
   });
 }
 
+function isProbablyPlaceholderKey(value: string) {
+  return !value || /המפתח/.test(value) || /your_key/i.test(value) || /placeholder/i.test(value);
+}
+
+function hasNonLatin1(value: string) {
+  return /[^\u0000-\u00ff]/.test(value);
+}
+
 export async function POST(req: Request) {
   try {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
+    const apiKey = process.env.ANTHROPIC_API_KEY || "";
+
+    if (isProbablyPlaceholderKey(apiKey) || hasNonLatin1(apiKey)) {
       return NextResponse.json(
-        { error: "Missing ANTHROPIC_API_KEY on the server." },
+        {
+          error: "ANTHROPIC_API_KEY is not set to a real Anthropic key. Put your real key in Vercel Environment Variables."
+        },
         { status: 500 }
       );
     }
