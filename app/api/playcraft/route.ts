@@ -15,8 +15,8 @@ type UiMessage = {
   files?: UiFile[];
 };
 
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
-const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
+const MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 const SYSTEM = `You are Playcraft AI, an elite game developer who builds playable games that feel polished.
 
@@ -69,72 +69,61 @@ function extractSummaryFromReply(text = "") {
   return text.match(/<game_summary>([\s\S]*?)<\/game_summary>/i)?.[1]?.trim() || "";
 }
 
-function buildAnthropicMessages(messages: UiMessage[]) {
-  return messages.map((message) => {
-    if (message.role === "assistant") {
-      return {
-        role: "assistant",
-        content: [{ type: "text", text: message.content || "" }]
-      };
-    }
+function buildUserText(message: UiMessage) {
+  const textSections: string[] = [];
 
-    const files = message.files || [];
-    const parts: Array<any> = [];
-    const textSections: string[] = [];
-
-    for (const file of files) {
-      if (file.type?.startsWith("image/") && file.base64) {
-        parts.push({
-          type: "image",
-          source: {
-            type: "base64",
-            media_type: file.type,
-            data: file.base64
-          }
-        });
-        continue;
-      }
-
-      if (file.text) {
-        textSections.push(`<attachment name="${file.name}">\n${truncate(file.text)}\n</attachment>`);
-        continue;
-      }
-
+  for (const file of message.files || []) {
+    if (file.text) {
+      textSections.push(`<attachment name="${file.name}">\n${truncate(file.text)}\n</attachment>`);
+    } else if (file.type?.startsWith("image/")) {
+      textSections.push(`<attachment name="${file.name}">Image attached by user.</attachment>`);
+    } else {
       textSections.push(`<attachment name="${file.name}">Binary file attached but no text content was available.</attachment>`);
     }
+  }
 
-    const textBlock = [
-      message.content?.trim() ? `<request>\n${message.content.trim()}\n</request>` : "",
-      textSections.length ? `<attached_files>\n${textSections.join("\n\n")}\n</attached_files>` : ""
-    ]
-      .filter(Boolean)
-      .join("\n\n") || "(empty user message)";
-
-    parts.push({ type: "text", text: textBlock });
-
-    return {
-      role: "user",
-      content: parts
-    };
-  });
+  return [
+    message.content?.trim() ? `<request>\n${message.content.trim()}\n</request>` : "",
+    textSections.length ? `<attached_files>\n${textSections.join("\n\n")}\n</attached_files>` : ""
+  ]
+    .filter(Boolean)
+    .join("\n\n") || "(empty user message)";
 }
 
-function isProbablyPlaceholderKey(value: string) {
-  return !value || /המפתח/.test(value) || /your_key/i.test(value) || /placeholder/i.test(value);
+function buildGroqMessages(messages: UiMessage[]) {
+  return [
+    { role: "system", content: SYSTEM },
+    ...messages.map((message) => {
+      if (message.role === "assistant") {
+        return {
+          role: "assistant",
+          content: message.content || ""
+        };
+      }
+
+      return {
+        role: "user",
+        content: buildUserText(message)
+      };
+    })
+  ];
 }
 
-function hasNonLatin1(value: string) {
-  return /[^\u0000-\u00ff]/.test(value);
+function isProbablyFakeGroqKey(value: string) {
+  if (!value) return true;
+  if (/המפתח|your_key|placeholder/i.test(value)) return true;
+  if (/\s/.test(value.trim())) return true;
+  return false;
 }
 
 export async function POST(req: Request) {
   try {
-    const apiKey = process.env.ANTHROPIC_API_KEY || "";
+    const apiKey = (process.env.GROQ_API_KEY || "").trim();
 
-    if (isProbablyPlaceholderKey(apiKey) || hasNonLatin1(apiKey)) {
+    if (isProbablyFakeGroqKey(apiKey)) {
       return NextResponse.json(
         {
-          error: "ANTHROPIC_API_KEY is not set to a real Anthropic key. Put your real key in Vercel Environment Variables."
+          error: "GROQ_API_KEY is missing or not real. Put your real Groq key in Vercel Environment Variables."
         },
         { status: 500 }
       );
@@ -147,18 +136,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No messages were provided." }, { status: 400 });
     }
 
-    const upstream = await fetch(ANTHROPIC_API_URL, {
+    const upstream = await fetch(GROQ_API_URL, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
+        authorization: `Bearer ${apiKey}`
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 12000,
-        system: SYSTEM,
-        messages: buildAnthropicMessages(messages)
+        messages: buildGroqMessages(messages),
+        temperature: 0.2,
+        max_tokens: 8192
       }),
       signal: req.signal
     });
@@ -168,18 +156,13 @@ export async function POST(req: Request) {
     if (!upstream.ok || json?.error) {
       return NextResponse.json(
         {
-          error: json?.error?.message || `Anthropic request failed with status ${upstream.status}.`
+          error: json?.error?.message || `Groq request failed with status ${upstream.status}.`
         },
         { status: upstream.status || 500 }
       );
     }
 
-    const reply = Array.isArray(json?.content)
-      ? json.content
-          .filter((block: any) => block?.type === "text")
-          .map((block: any) => block.text || "")
-          .join("\n\n")
-      : "";
+    const reply = json?.choices?.[0]?.message?.content || "";
 
     return NextResponse.json({
       reply,
