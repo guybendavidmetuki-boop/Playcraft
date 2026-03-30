@@ -1,168 +1,191 @@
-export const runtime = "edge";
+import { NextResponse } from "next/server";
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const TEXT_MODEL = "groq/compound";
-const VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+export const runtime = "nodejs";
 
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+type OutFile = { name: string; content: string; mime: string };
+
+function cleanText(text: string) {
+  return (text || "").replace(/\u0000/g, "").trim();
 }
 
-function buildSystem(mode) {
-  const base = `You are Playcraft, a smart all-purpose AI assistant.
-You are especially strong at:
-- writing real, usable code
-- building games
-- explaining code clearly
-- ESP32 and Arduino IDE projects
-- analyzing screenshots and UI designs
-- finding current information when your model has web access
-
-Rules:
-- Chat normally when the user is just talking.
-- If the user asks for code, give complete usable code.
-- If the user asks for a game, build the game they asked for, not a random one.
-- If the user asks about a screenshot or design reference, analyze it carefully and be very specific.
-- If the user asks for current/latest information, use web search if available through the model.
-- Be practical and direct.`;
-
-  if (mode === "study") {
-    return `${base}
-
-Study mode rules:
-- teach step by step
-- explain simply
-- help the user learn, not only copy-paste
-- still give full code if the user explicitly asks for it`;
+function extractFiles(text: string) {
+  const files: OutFile[] = [];
+  const regex = /<file\s+name="([^"]+)"(?:\s+mime="([^"]+)")?>([\s\S]*?)<\/file>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text))) {
+    files.push({
+      name: match[1],
+      mime: match[2] || "text/plain;charset=utf-8",
+      content: match[3].trim(),
+    });
   }
-
-  return base;
+  return {
+    text: text.replace(regex, "").trim(),
+    files,
+  };
 }
 
-function summarizeTextAttachment(file) {
-  const text = typeof file.text === "string" ? file.text.slice(0, 30000) : "";
-  return `\n\nAttached file: ${file.name}\nType: ${file.type || "unknown"}\n\n${text}`;
-}
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const mode = body.mode || "chat";
 
-function normalizeMessages(messages = []) {
-  let hasImage = false;
+    const apiKey = process.env.GROQ_API_KEY;
+    const model = process.env.GROQ_MODEL || "groq/compound";
+    const imageBase = process.env.NEXT_PUBLIC_IMAGE_API_BASE || "";
 
-  const normalized = messages
-    .filter((msg) => msg && (msg.content || msg.files?.length))
-    .map((msg) => {
-      if (msg.role === "assistant") {
-        return {
-          role: "assistant",
-          content: msg.content || "",
-        };
+    if (!apiKey || apiKey.length < 20) {
+      return NextResponse.json(
+        { error: "GROQ_API_KEY is missing or not real. Put your real Groq key in Vercel Environment Variables." },
+        { status: 400 }
+      );
+    }
+
+    const system = `You are Playcraft AI.
+
+You are a smart general assistant for:
+- games
+- coding
+- ESP32 / Arduino IDE
+- design help
+- learning
+- casual chat
+
+GLOBAL RULES
+- Always answer clearly and neatly.
+- Use short sections and clean markdown.
+- Keep the first explanation short and useful.
+- If the user is casually chatting, answer naturally.
+- If the user asks for code, put code only inside fenced markdown code blocks.
+- Never create downloadable files unless the rules below say to.
+
+GAME RULES (VERY IMPORTANT)
+- For game requests, the DEFAULT is:
+  1) a short explanation in normal text
+  2) then a downloadable file
+- So if the user says things like "build me a game", "make a game", "create a game", the normal default is:
+  - short explanation
+  - then one or more <file name="..."> ... </file> blocks
+- Prefer ONE compact self-contained file for games when possible.
+- For HTML/web games, default to one self-contained index.html file unless the user asks for another structure.
+- Keep game files reasonably compact and runnable.
+
+GAME CODE RULES
+- If the user asks for CODE for a game, then DO NOT create a file by default.
+- Instead give:
+  1) short explanation
+  2) clean markdown code block(s)
+- Only create game files when the user asks for a file/project/download OR when the user asks to build/create a game without explicitly asking for code.
+
+NON-GAME CODE RULES
+- For Arduino IDE / ESP32 and other coding tasks:
+  - do NOT create a file by default
+  - give short explanation + copyable code block
+  - add very short wiring/usage notes when useful
+- If the user explicitly asks for a file, then create a file.
+
+DESIGN / IMAGE / WEB RULES
+- If the user uploads a screenshot, analyze it carefully and mention concrete UI details.
+- If the user asks for current info, design references, trends, or examples, use web search.
+- If the user asks to create an image and image generation is available, write a short response and a vivid image prompt.
+
+FORMATTING RULES
+- Keep responses neat, readable, and well organized.
+- Use headings only when helpful.
+- Use bullets and numbered steps when helpful.
+- Keep the explanation before code or files short.
+- Do not dump giant walls of text.
+- When creating files, put the explanation OUTSIDE the file tags.
+- Never wrap file content in markdown fences when using <file> tags.
+
+EXAMPLES
+1) User: "build me a wordle game"
+Answer style:
+Short explanation.
+<file name="index.html" mime="text/html">...full code...</file>
+
+2) User: "give me the code for a wordle game"
+Answer style:
+Short explanation.
+\
+\
+\
+
+a markdown code block only, no file by default.
+
+3) User: "write esp32 code for Arduino IDE that blinks an LED"
+Answer style:
+Short explanation.
+A markdown code block.
+No file by default.`;
+
+    const hasImage = messages.some((m: any) => (m.files || []).some((f: any) => f.kind === "image"));
+
+    const groqMessages = messages.map((m: any) => {
+      if (m.role === "assistant") {
+        return { role: "assistant", content: cleanText(m.text || "") };
       }
 
-      const files = Array.isArray(msg.files) ? msg.files : [];
-      const imageFiles = files.filter((file) => file?.type?.startsWith("image/") && file.dataUrl);
-      const textFiles = files.filter((file) => !file?.type?.startsWith("image/") && file.text);
+      const parts: any[] = [];
+      const textParts: string[] = [];
 
-      if (imageFiles.length) hasImage = true;
+      if (m.text) textParts.push(cleanText(m.text));
+      if (m.mode && m.mode !== "chat") textParts.unshift(`Mode: ${m.mode}`);
 
-      if (hasImage || imageFiles.length) {
-        const parts = [];
-        let text = msg.content || "";
-        if (textFiles.length) {
-          text += textFiles.map(summarizeTextAttachment).join("\n\n");
+      for (const f of m.files || []) {
+        if (f.kind === "image" && f.base64) {
+          parts.push({ type: "image_url", image_url: { url: `data:${f.mime || "image/jpeg"};base64,${f.base64}` } });
+        } else if (f.kind === "text") {
+          textParts.push(`Attached file: ${f.name}${f.truncated ? " (truncated)" : ""}\n\n${f.text}`);
         }
-        parts.push({ type: "text", text: text || "Please analyze the attached file(s)." });
-        imageFiles.slice(0, 4).forEach((file) => {
-          parts.push({
-            type: "image_url",
-            image_url: { url: file.dataUrl },
-          });
-        });
-        return { role: "user", content: parts };
       }
 
-      let text = msg.content || "";
-      if (textFiles.length) {
-        text += textFiles.map(summarizeTextAttachment).join("\n\n");
-      }
-      return {
-        role: "user",
-        content: text || "Please analyze the attached file(s).",
-      };
+      const finalText = textParts.join("\n\n").trim() || "Hello";
+      if (!parts.length) return { role: "user", content: finalText };
+      return { role: "user", content: [{ type: "text", text: finalText }, ...parts] };
     });
 
-  return { normalized, hasImage };
-}
-
-function collectSources(message) {
-  const tools = message?.executed_tools || [];
-  const seen = new Set();
-  const sources = [];
-
-  for (const tool of tools) {
-    const results = tool?.search_results?.results || tool?.search_results || [];
-    for (const item of results) {
-      if (!item?.url || seen.has(item.url)) continue;
-      seen.add(item.url);
-      sources.push({ title: item.title || item.url, url: item.url });
-      if (sources.length >= 6) return sources;
-    }
-  }
-
-  return sources;
-}
-
-export async function POST(req) {
-  try {
-    if (!GROQ_API_KEY || GROQ_API_KEY.includes("המפתח") || GROQ_API_KEY.length < 20) {
-      return json({ error: "GROQ_API_KEY is missing or not real. Put your real Groq key in Vercel Environment Variables." }, 400);
-    }
-
-    const body = await req.json();
-    const mode = body?.mode || "chat";
-    const messages = Array.isArray(body?.messages) ? body.messages : [];
-
-    const { normalized, hasImage } = normalizeMessages(messages);
-    if (!normalized.length) {
-      return json({ error: "No message to send." }, 400);
-    }
-
-    const model = hasImage ? VISION_MODEL : TEXT_MODEL;
-
-    const groqPayload = {
-      model,
-      temperature: 0.35,
-      max_completion_tokens: 2200,
-      messages: [
-        { role: "system", content: buildSystem(mode) },
-        ...normalized,
-      ],
+    const modelToUse = hasImage ? "meta-llama/llama-4-scout-17b-16e-instruct" : model;
+    const payload: any = {
+      model: modelToUse,
+      messages: [{ role: "system", content: system }, ...groqMessages],
+      temperature: 0.45,
+      max_completion_tokens: 4096,
     };
 
-    const response = await fetch(GROQ_API_URL, {
+    if (!hasImage && modelToUse.startsWith("groq/compound")) {
+      payload.tools = [{ type: "web_search" }, { type: "code_interpreter" }];
+    }
+
+    const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${GROQ_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify(groqPayload),
+      body: JSON.stringify(payload),
     });
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      const message = data?.error?.message || data?.message || "Groq request failed.";
-      return json({ error: message }, response.status);
+    const data = await resp.json();
+    if (!resp.ok) {
+      const msg = data?.error?.message || data?.message || "Groq request failed.";
+      return NextResponse.json({ error: msg }, { status: 500 });
     }
 
-    const message = data?.choices?.[0]?.message || {};
-    const text = message?.content || "No response.";
-    const sources = hasImage ? [] : collectSources(message);
+    const rawText = data?.choices?.[0]?.message?.content || "";
+    const { text, files } = extractFiles(rawText);
 
-    return json({ text, sources, model, usedVision: hasImage, usedWebSearch: !hasImage && sources.length > 0 });
-  } catch (error) {
-    return json({ error: error?.message || "Unexpected server error." }, 500);
+    let generatedImageUrl = "";
+    if (mode === "image" && imageBase) {
+      try {
+        const prompt = encodeURIComponent(text || messages[messages.length - 1]?.text || "A beautiful cheerful illustration");
+        generatedImageUrl = `${imageBase}${imageBase.includes("?") ? "&" : imageBase.endsWith("/") ? "" : "/"}${prompt}`;
+      } catch {}
+    }
+
+    return NextResponse.json({ text: text || "Done.", files, generatedImageUrl });
+  } catch (error: any) {
+    return NextResponse.json({ error: error?.message || "Server error" }, { status: 500 });
   }
 }
