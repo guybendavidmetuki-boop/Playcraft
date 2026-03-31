@@ -1,552 +1,591 @@
-'use client';
-
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-
-const uid = () => Math.random().toString(36).slice(2, 10);
+"use client";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const THEMES = {
   light: {
-    bg: '#eef2ff',
-    panel: '#ffffff',
-    soft: '#f5f7ff',
-    text: '#0f172a',
-    border: '#dde4ff',
-    accent: '#7c5cff',
-    accent2: '#5ed0ff',
+    bg: "#f5f7fb",
+    panel: "#ffffff",
+    border: "#d9e1f2",
+    text: "#16213e",
+    muted: "#6f7b95",
+    accent: "#6c63ff",
+    accent2: "#4cc9f0",
+    bubbleUser: "#e9ecff",
+    bubbleAssistant: "#ffffff",
+    previewBg: "#f7f9ff",
   },
   dark: {
-    bg: '#0b1020',
-    panel: '#11182b',
-    soft: '#151d32',
-    text: '#ecf1ff',
-    border: '#29314d',
-    accent: '#7c5cff',
-    accent2: '#2dd4ff',
+    bg: "#0c1222",
+    panel: "#121a2f",
+    border: "#2b3553",
+    text: "#eef3ff",
+    muted: "#a8b4d1",
+    accent: "#8b7cff",
+    accent2: "#4cc9f0",
+    bubbleUser: "#2a3458",
+    bubbleAssistant: "#141d33",
+    previewBg: "#0d1528",
   },
 };
 
+const DEFAULT_CHAT = () => ({
+  id: crypto.randomUUID(),
+  title: "שיחה חדשה",
+  pinned: false,
+  messages: [],
+  files: [],
+  mode: "chat",
+  projectId: null,
+});
+
+function detectDir(text = "") {
+  const heb = (text.match(/[\u0590-\u05FF]/g) || []).length;
+  const lat = (text.match(/[A-Za-z]/g) || []).length;
+  if (heb && heb >= lat) return "rtl";
+  if (lat && lat > heb) return "ltr";
+  return "auto";
+}
+
 function Icon({ children }) {
-  return <span className="iconWrap">{children}</span>;
-}
-function IconPlus() { return <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"/></svg>; }
-function IconSend() { return <svg viewBox="0 0 24 24" fill="none"><path d="M21 3 10 14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/><path d="M21 3 14 21l-4-7-7-4 18-7Z" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round"/></svg>; }
-function IconMic() { return <svg viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Z" stroke="currentColor" strokeWidth="2.2"/><path d="M19 11a7 7 0 0 1-14 0" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/><path d="M12 18v3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/><path d="M8 21h8" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>; }
-function IconFolder() { return <svg viewBox="0 0 24 24" fill="none"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" stroke="currentColor" strokeWidth="2.2"/></svg>; }
-function IconChat() { return <svg viewBox="0 0 24 24" fill="none"><path d="M7 18 3 21V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7Z" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round"/></svg>; }
-function IconSearch() { return <svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="2.2"/><path d="m20 20-4.2-4.2" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>; }
-function IconPin() { return <svg viewBox="0 0 24 24" fill="none"><path d="m14 4 6 6-3 1-2 5-1 1-5 2 2-5 1-1 5-2 1-3Z" stroke="currentColor" strokeWidth="2.1" strokeLinejoin="round"/></svg>; }
-function IconTrash() { return <svg viewBox="0 0 24 24" fill="none"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round"/></svg>; }
-function IconEdit() { return <svg viewBox="0 0 24 24" fill="none"><path d="m4 20 4.5-1 9-9a2.12 2.12 0 0 0-3-3l-9 9L4 20Z" stroke="currentColor" strokeWidth="2.1" strokeLinejoin="round"/></svg>; }
-function IconCode() { return <svg viewBox="0 0 24 24" fill="none"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13 5l-2 14" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
-function IconEye() { return <svg viewBox="0 0 24 24" fill="none"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" stroke="currentColor" strokeWidth="2.1"/><circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2.1"/></svg>; }
-function IconDownload() { return <svg viewBox="0 0 24 24" fill="none"><path d="M12 3v12M7 10l5 5 5-5M5 21h14" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
-function IconOpen() { return <svg viewBox="0 0 24 24" fill="none"><path d="M14 4h6v6M10 14 20 4M20 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h5" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
-function IconPublish() { return <svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4M8 8l4-4 4 4M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
-function IconX() { return <svg viewBox="0 0 24 24" fill="none"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round"/></svg>; }
-function IconHeartUp() { return <svg viewBox="0 0 24 24" fill="none"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2 4 4 0 0 1 7 2c0 5.6-7 10-7 10Z" stroke="currentColor" strokeWidth="2.1"/></svg>; }
-function IconTheme() { return <svg viewBox="0 0 24 24" fill="none"><path d="M12 3a9 9 0 1 0 9 9A7 7 0 0 1 12 3Z" stroke="currentColor" strokeWidth="2.1"/></svg>; }
-
-function summarizeChat(messages) {
-  const text = messages.filter(m => m.role === 'user').map(m => m.text).join(' ').trim();
-  if (!text) return 'New chat';
-  if (/wordle|וורדל/i.test(text)) return 'וורדל ועיצוב';
-  if (/esp32|arduino/i.test(text)) return 'ESP32 / Arduino';
-  if (/image|תמונה/i.test(text)) return 'עיצוב מתמונה';
-  if (/game|משחק/i.test(text)) return 'בניית משחק';
-  return text.replace(/\s+/g, ' ').split(' ').slice(0, 5).join(' ');
+  return <span style={{ width: 18, display: "inline-flex", justifyContent: "center" }}>{children}</span>;
 }
 
-function makeDefaultChat() {
-  return {
-    id: uid(),
-    projectId: null,
-    pinned: false,
-    mode: 'chat',
-    title: 'New chat',
-    messages: [],
-    latestFile: null,
-    files: [],
-  };
+function ActionButton({ label, icon, onClick, active, small }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        borderRadius: 16,
+        border: "1px solid var(--border)",
+        background: active ? "var(--accentSoft)" : "var(--panel)",
+        color: "var(--text)",
+        padding: small ? "8px 12px" : "12px 16px",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        fontWeight: 700,
+        cursor: "pointer",
+        transition: "0.18s ease",
+      }}
+      type="button"
+    >
+      {icon ? <Icon>{icon}</Icon> : null}
+      <span>{label}</span>
+    </button>
+  );
 }
 
-function makeDefaultProject() {
-  return {
-    id: uid(),
-    name: 'New project',
-    pinned: false,
-    style: 'modern',
-    notes: '',
-    preferences: [],
-    files: [],
-  };
-}
-
-export default function Page() {
-  const [theme, setTheme] = useState('light');
-  const colors = THEMES[theme];
+export default function PlaycraftPage() {
+  const [theme, setTheme] = useState("light");
+  const t = THEMES[theme];
+  const [chats, setChats] = useState([DEFAULT_CHAT()]);
   const [projects, setProjects] = useState([]);
-  const [chats, setChats] = useState([]);
-  const [activeChatId, setActiveChatId] = useState('');
-  const [draft, setDraft] = useState('');
-  const [menu, setMenu] = useState(null);
-  const [search, setSearch] = useState('');
+  const [activeChatId, setActiveChatId] = useState(null);
+  const [draft, setDraft] = useState("");
+  const [menuOpen, setMenuOpen] = useState(null);
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState('');
-  const [previewOpen, setPreviewOpen] = useState(true);
-  const [previewTab, setPreviewTab] = useState('preview');
-  const [typingId, setTypingId] = useState('');
-  const [recording, setRecording] = useState(false);
-  const [voiceReply, setVoiceReply] = useState(false);
-  const [voiceLang, setVoiceLang] = useState('he-IL');
-  const [refs, setRefs] = useState([]);
-  const [copied, setCopied] = useState('');
-  const [toast, setToast] = useState('');
-  const abortRef = useRef(null);
-  const menuRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const composerRef = useRef(null);
+  const [status, setStatus] = useState("");
+  const [search, setSearch] = useState("");
+  const [previewVisible, setPreviewVisible] = useState(true);
+  const [previewTab, setPreviewTab] = useState("preview");
+  const [previewFile, setPreviewFile] = useState(null);
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const [voiceOverlay, setVoiceOverlay] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [voicePulse, setVoicePulse] = useState(0);
+  const [toast, setToast] = useState("");
+
   const messagesRef = useRef(null);
+  const fileRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const speakingRef = useRef(false);
 
   useEffect(() => {
+    const saved = localStorage.getItem("playcraft-reset-pro");
+    if (!saved) return;
     try {
-      const saved = JSON.parse(localStorage.getItem('playcraft-clean-v1') || '{}');
-      if (saved.projects) setProjects(saved.projects);
-      if (saved.chats?.length) {
-        setChats(saved.chats);
-        setActiveChatId(saved.activeChatId || saved.chats[0].id);
-      } else {
-        const c = makeDefaultChat();
-        setChats([c]);
-        setActiveChatId(c.id);
+      const parsed = JSON.parse(saved);
+      if (parsed.theme) setTheme(parsed.theme);
+      if (parsed.projects) setProjects(parsed.projects);
+      if (parsed.chats?.length) {
+        setChats(parsed.chats);
+        setActiveChatId(parsed.activeChatId || parsed.chats[0].id);
       }
-      if (saved.theme) setTheme(saved.theme);
-    } catch {
-      const c = makeDefaultChat();
-      setChats([c]);
-      setActiveChatId(c.id);
-    }
+    } catch {}
   }, []);
 
   useEffect(() => {
-    if (!chats.length) return;
-    localStorage.setItem('playcraft-clean-v1', JSON.stringify({ projects, chats, activeChatId, theme }));
-  }, [projects, chats, activeChatId, theme]);
+    localStorage.setItem(
+      "playcraft-reset-pro",
+      JSON.stringify({ theme, chats, activeChatId, projects })
+    );
+  }, [theme, chats, activeChatId, projects]);
 
   useEffect(() => {
-    const onDown = e => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) setMenu(null);
+    if (!activeChatId && chats[0]) setActiveChatId(chats[0].id);
+  }, [activeChatId, chats]);
+
+  useEffect(() => {
+    const close = (e) => {
+      if (!e.target.closest("[data-menu-root='true']")) {
+        setMenuOpen(null);
+        setModeMenuOpen(false);
+        setThemeMenuOpen(false);
+      }
     };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
   }, []);
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(''), 1800);
-    return () => clearTimeout(t);
+    const id = setTimeout(() => setToast(""), 1800);
+    return () => clearTimeout(id);
   }, [toast]);
 
-  const activeChat = chats.find(c => c.id === activeChatId) || chats[0];
-  const activeProject = projects.find(p => p.id === activeChat?.projectId) || null;
-  const previewFile = activeChat?.latestFile || activeProject?.files?.at?.(-1) || null;
+  const activeChat = chats.find((c) => c.id === activeChatId) || chats[0];
 
-  const filteredProjects = useMemo(() => projects.filter(p => p.name.toLowerCase().includes(search.toLowerCase())), [projects, search]);
-  const filteredChats = useMemo(() => chats.filter(c => (c.title || '').toLowerCase().includes(search.toLowerCase())), [chats, search]);
+  const visibleChats = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return chats;
+    return chats.filter((c) => c.title.toLowerCase().includes(q) || c.messages.some((m) => (m.text || "").toLowerCase().includes(q)));
+  }, [chats, search]);
 
-  function updateChat(id, updater) {
-    setChats(prev => prev.map(c => c.id === id ? updater(c) : c));
+  useEffect(() => {
+    if (!messagesRef.current) return;
+    messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+  }, [activeChat?.messages.length, loading]);
+
+  function patchActiveChat(updater) {
+    setChats((prev) => prev.map((c) => (c.id === activeChat.id ? updater(c) : c)));
   }
 
-  function createChat(projectId = null) {
-    const c = makeDefaultChat();
-    c.projectId = projectId;
-    setChats(prev => [c, ...prev]);
-    setActiveChatId(c.id);
-    setDraft('');
-    setRefs([]);
-    setMenu(null);
+  function addMessage(role, text, extra = {}) {
+    const msg = { id: crypto.randomUUID(), role, text, createdAt: Date.now(), ...extra };
+    patchActiveChat((c) => ({ ...c, messages: [...c.messages, msg] }));
+    return msg.id;
+  }
+
+  function updateMessage(id, patch) {
+    patchActiveChat((c) => ({ ...c, messages: c.messages.map((m) => (m.id === id ? { ...m, ...patch } : m)) }));
+  }
+
+  function createChat(mode = "chat", projectId = null) {
+    const chat = { ...DEFAULT_CHAT(), mode, projectId };
+    setChats((prev) => [chat, ...prev]);
+    setActiveChatId(chat.id);
+    setDraft("");
   }
 
   function createProject() {
-    const name = prompt('Project name?')?.trim();
+    const name = prompt("שם לפרויקט?");
     if (!name) return;
-    const p = { ...makeDefaultProject(), name };
-    setProjects(prev => [p, ...prev]);
-    createChat(p.id);
-  }
-
-  function renameChat(id) {
-    const target = chats.find(c => c.id === id);
-    const name = prompt('Rename chat', target?.title || '')?.trim();
-    if (!name) return;
-    updateChat(id, c => ({ ...c, title: name }));
-  }
-
-  function renameProject(id) {
-    const target = projects.find(p => p.id === id);
-    const name = prompt('Rename project', target?.name || '')?.trim();
-    if (!name) return;
-    setProjects(prev => prev.map(p => p.id === id ? { ...p, name } : p));
+    const p = { id: crypto.randomUUID(), name, pinned: false, style: "modern", fileIds: [] };
+    setProjects((prev) => [p, ...prev]);
   }
 
   function deleteChat(id) {
-    const remain = chats.filter(c => c.id !== id);
-    if (!remain.length) {
-      const c = makeDefaultChat();
-      setChats([c]);
-      setActiveChatId(c.id);
-      return;
-    }
-    setChats(remain);
-    if (activeChatId === id) setActiveChatId(remain[0].id);
+    const next = chats.filter((c) => c.id !== id);
+    setChats(next);
+    if (activeChatId === id) setActiveChatId(next[0]?.id || null);
+  }
+
+  function renameChat(id) {
+    const chat = chats.find((c) => c.id === id);
+    const name = prompt("שם חדש לשיחה", chat?.title || "");
+    if (!name) return;
+    setChats((prev) => prev.map((c) => (c.id === id ? { ...c, title: name } : c)));
   }
 
   function deleteProject(id) {
-    setProjects(prev => prev.filter(p => p.id !== id));
-    setChats(prev => prev.map(c => c.projectId === id ? { ...c, projectId: null } : c));
+    setProjects((prev) => prev.filter((p) => p.id !== id));
+    setChats((prev) => prev.map((c) => (c.projectId === id ? { ...c, projectId: null } : c)));
   }
 
-  function togglePinChat(id) { updateChat(id, c => ({ ...c, pinned: !c.pinned })); }
-  function togglePinProject(id) { setProjects(prev => prev.map(p => p.id === id ? { ...p, pinned: !p.pinned } : p)); }
-
-  function speakText(text) {
-    if (!voiceReply || !('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = voiceLang;
-    window.speechSynthesis.speak(u);
+  function renameProject(id) {
+    const project = projects.find((p) => p.id === id);
+    const name = prompt("שם חדש לפרויקט", project?.name || "");
+    if (!name) return;
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, name } : p)));
   }
 
-  function startVoiceInput() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      setToast('Voice input not supported here');
-      return;
-    }
-    const rec = new SR();
-    rec.lang = voiceLang;
-    rec.interimResults = false;
-    rec.maxAlternatives = 1;
-    rec.onstart = () => setRecording(true);
-    rec.onerror = () => { setRecording(false); setToast('Voice failed'); };
-    rec.onend = () => setRecording(false);
-    rec.onresult = e => {
-      const text = e.results?.[0]?.[0]?.transcript || '';
-      if (!text) return;
-      setDraft(text);
-      setTimeout(() => sendMessage(text), 80);
-    };
-    rec.start();
+  function togglePinChat(id) {
+    setChats((prev) => prev.map((c) => (c.id === id ? { ...c, pinned: !c.pinned } : c)));
   }
 
-  async function toDataUrl(file) {
-    return await new Promise((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => resolve(fr.result);
-      fr.onerror = reject;
-      fr.readAsDataURL(file);
-    });
+  function copyText(text) {
+    navigator.clipboard.writeText(text || "");
+    setToast("Copied");
   }
 
-  async function addFiles(fileList) {
-    const arr = Array.from(fileList || []);
-    const next = [];
-    for (const f of arr) {
-      const item = { name: f.name, type: f.type || 'application/octet-stream' };
-      if (f.type.startsWith('image/')) item.dataUrl = await toDataUrl(f);
-      else item.text = await f.text();
-      next.push(item);
-    }
-    setRefs(prev => [...prev, ...next]);
-    setMenu(null);
-  }
-
-  async function sendMessage(forcedText) {
-    const text = (forcedText ?? draft).trim();
-    if (!text && refs.length === 0) return;
+  async function sendMessage(forceVoice = false) {
     if (!activeChat) return;
+    const text = draft.trim();
+    if (!text && !forceVoice) return;
 
-    if (abortRef.current) {
-      try { abortRef.current.abort(); } catch {}
-      abortRef.current = null;
-    }
-
-    const userMsg = { id: uid(), role: 'user', text, createdAt: Date.now() };
-    const placeholderId = uid();
-
-    updateChat(activeChat.id, c => {
-      const nextMessages = [...c.messages, userMsg, { id: placeholderId, role: 'assistant', text: '', loading: true, createdAt: Date.now() }];
-      return { ...c, messages: nextMessages, title: summarizeChat(nextMessages) };
-    });
-
-    setDraft('');
-    setRefs([]);
+    const finalText = text || "[voice]";
+    setDraft("");
     setLoading(true);
-    setTypingId(placeholderId);
-    setStatus('Thinking...');
-    setMenu(null);
+    setStatus("Thinking...");
+    addMessage("user", text || "🎤 הודעה קולית");
 
-    const controller = new AbortController();
-    abortRef.current = controller;
+    const assistantId = addMessage("assistant", "", { pending: true });
 
     try {
-      const res = await fetch('/api/playcraft', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          draft: text,
-          mode: activeChat.mode || 'chat',
-          messages: activeChat.messages.map(m => ({ role: m.role, text: m.text })),
-          references: refs,
-          latestFile: activeChat.latestFile,
-          projectMemory: activeProject ? { style: activeProject.style, notes: activeProject.notes, preferences: activeProject.preferences } : null,
-        }),
+      const body = {
+        prompt: finalText,
+        mode: activeChat.mode || "chat",
+        history: activeChat.messages.slice(-12).map((m) => ({ role: m.role, text: m.text })),
+        project: projects.find((p) => p.id === activeChat.projectId) || null,
+        lastFile: activeChat.files?.[0] || null,
+      };
+      const res = await fetch("/api/playcraft/route", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Request failed');
+      if (!res.ok) throw new Error(data.error || "Failed");
 
-      const assistantText = data.text || 'Done.';
-      const files = data.files || [];
-      const firstFile = files[0] || null;
-
-      updateChat(activeChat.id, c => {
-        const msgs = c.messages.map(m => m.id === placeholderId ? { ...m, text: assistantText, loading: false, files } : m);
-        return {
-          ...c,
-          title: data.title || summarizeChat(msgs),
-          messages: msgs,
-          latestFile: firstFile || c.latestFile,
-          files: files.length ? [...(c.files || []), ...files] : c.files,
-        };
+      updateMessage(assistantId, {
+        pending: false,
+        text: data.text || "Done.",
+        code: data.code || null,
+        file: data.file || null,
       });
 
-      if (activeProject && files.length) {
-        setProjects(prev => prev.map(p => p.id === activeProject.id ? { ...p, files: [...(p.files || []), ...files] } : p));
+      if (data.file) {
+        patchActiveChat((c) => ({ ...c, files: [data.file, ...(c.files || [])] }));
+        if (data.file.previewUrl) {
+          setPreviewVisible(true);
+          setPreviewTab("preview");
+          setPreviewFile(data.file);
+        }
       }
-
-      if (firstFile) {
-        setPreviewOpen(true);
-        setPreviewTab(firstFile.language === 'html' ? 'preview' : 'code');
+      if (data.title) {
+        patchActiveChat((c) => ({ ...c, title: data.title }));
       }
-
-      speakText(assistantText);
-      setStatus('');
-    } catch (err) {
-      const msg = err?.message || 'Request failed';
-      updateChat(activeChat.id, c => ({
-        ...c,
-        messages: c.messages.map(m => m.id === placeholderId ? { ...m, text: `⚠️ ${msg}`, loading: false } : m),
-      }));
-      setStatus('');
+      if (voiceOverlay && data.text) speakText(data.text);
+    } catch (e) {
+      updateMessage(assistantId, { pending: false, text: `⚠️ ${e.message}` });
     } finally {
       setLoading(false);
-      setTypingId('');
-      abortRef.current = null;
+      setStatus("");
     }
   }
 
-  function copy(text, key) {
-    navigator.clipboard.writeText(text || '');
-    setCopied(key);
-    setToast('Copied');
-    setTimeout(() => setCopied(''), 1300);
+  function speakText(text) {
+    if (!("speechSynthesis" in window) || !text) return;
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    const dir = detectDir(text);
+    utter.lang = dir === "rtl" ? "he-IL" : "en-US";
+    utter.onstart = () => {
+      setSpeaking(true);
+      speakingRef.current = true;
+    };
+    utter.onend = () => {
+      setSpeaking(false);
+      speakingRef.current = false;
+    };
+    window.speechSynthesis.speak(utter);
   }
 
-  function downloadFile(file) {
-    if (file?.downloadUrl) {
-      window.open(file.downloadUrl, '_blank');
+  function toggleVoiceOverlay() {
+    if (!voiceOverlay) {
+      setVoiceOverlay(true);
+      startListening();
+    } else {
+      stopListening();
+      setVoiceOverlay(false);
+    }
+  }
+
+  function startListening() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      setToast("Voice is not supported here");
       return;
     }
-    const blob = new Blob([file.content], { type: file.mimeType || 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = file.name || 'file.txt';
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function openFile(file) {
-    if (file?.openUrl) window.open(file.openUrl, '_blank');
-    else setPreviewOpen(true);
-  }
-
-  function publishFile(file) {
-    if (file?.publishedUrl) {
-      navigator.clipboard.writeText(file.publishedUrl);
-      setToast('Publish link copied');
-      window.open(file.publishedUrl, '_blank');
+    try {
+      const rec = new SR();
+      recognitionRef.current = rec;
+      rec.lang = "he-IL";
+      rec.interimResults = true;
+      rec.continuous = true;
+      rec.onstart = () => {
+        setListening(true);
+        setVoicePulse(1);
+      };
+      rec.onresult = (event) => {
+        const text = Array.from(event.results)
+          .map((r) => r[0]?.transcript || "")
+          .join(" ");
+        setDraft(text.trim());
+      };
+      rec.onerror = () => {
+        setListening(false);
+        setVoicePulse(0);
+      };
+      rec.onend = () => {
+        setListening(false);
+        setVoicePulse(0);
+      };
+      rec.start();
+    } catch {
+      setToast("Voice start failed");
     }
   }
 
-  const sortedProjects = [...filteredProjects].sort((a, b) => Number(b.pinned) - Number(a.pinned));
-  const sortedChats = [...filteredChats].sort((a, b) => Number(b.pinned) - Number(a.pinned));
+  function stopListening() {
+    recognitionRef.current?.stop?.();
+    setListening(false);
+    setVoicePulse(0);
+  }
+
+  function onVoiceSend() {
+    stopListening();
+    if (draft.trim()) sendMessage(true);
+  }
+
+  function onFilePick(files) {
+    if (!files?.length) return;
+    const names = Array.from(files).map((f) => f.name).join(", ");
+    addMessage("user", `📎 ${names}`);
+    setToast("Files added");
+  }
 
   return (
-    <div className="shell" style={{ '--bg': colors.bg, '--panel': colors.panel, '--soft': colors.soft, '--text': colors.text, '--border': colors.border, '--accent': colors.accent, '--accent2': colors.accent2 }}>
-      <aside className="sidebar">
-        <div className="brand"><div className="brandDot">✦</div><div><div className="brandName">Playcraft</div><div className="brandSub">smart chat, code, games</div></div></div>
-        <div className="searchBox"><Icon><IconSearch /></Icon><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search chats and projects" /></div>
-        <div className="sideActions">
-          <button className="bigBtn" onClick={() => createChat(null)}><Icon><IconChat /></Icon>New chat</button>
-          <button className="bigBtn" onClick={createProject}><Icon><IconFolder /></Icon>Add project</button>
-        </div>
+    <div
+      style={{
+        "--bg": t.bg,
+        "--panel": t.panel,
+        "--border": t.border,
+        "--text": t.text,
+        "--muted": t.muted,
+        "--accent": t.accent,
+        "--accent2": t.accent2,
+        "--accentSoft": `${t.accent}1a`,
+        minHeight: "100vh",
+        background: "var(--bg)",
+        color: "var(--text)",
+        display: "flex",
+        gap: 16,
+        padding: 16,
+        fontFamily: "Inter, Arial, sans-serif",
+      }}
+      dir="rtl"
+    >
+      <style>{`
+        * { box-sizing: border-box; }
+        button:hover { filter: brightness(0.98); }
+        .scroll { scrollbar-width: thin; }
+        .scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+        .scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+        .msg-actions { opacity: 0; transition: .15s; }
+        .msg:hover .msg-actions { opacity: 1; }
+        @keyframes pulse {
+          0% { transform: scale(1); opacity: .9; }
+          50% { transform: scale(1.08); opacity: .6; }
+          100% { transform: scale(1); opacity: .9; }
+        }
+      `}</style>
 
-        <div className="sectionTitle">Projects</div>
-        <div className="listCol">
-          {sortedProjects.length ? sortedProjects.map(p => (
-            <div key={p.id} className="listCard">
-              <div className="listMain" onClick={() => createChat(p.id)}><Icon><IconFolder /></Icon><div><div>{p.name}</div><small>{p.style}</small></div></div>
-              <div className="actionsMini">
-                <button onClick={() => togglePinProject(p.id)} title="Pin"><IconPin /></button>
-                <button onClick={() => renameProject(p.id)} title="Rename"><IconEdit /></button>
-                <button onClick={() => deleteProject(p.id)} title="Delete"><IconTrash /></button>
+      <aside style={{ width: 320, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 28, padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 42, height: 42, borderRadius: 14, background: `linear-gradient(135deg, var(--accent), var(--accent2))`, display: "grid", placeItems: "center", color: "white", fontWeight: 900 }}>✦</div>
+          <div>
+            <div style={{ fontSize: 26, fontWeight: 900 }}>Playcraft</div>
+            <div style={{ color: "var(--muted)" }}>smart chat, code, games</div>
+          </div>
+        </div>
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search chats and projects" style={{ width: "100%", borderRadius: 16, border: "1px solid var(--border)", background: "transparent", color: "var(--text)", padding: 14 }} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <ActionButton label="New chat" icon="💬" onClick={() => createChat()} />
+          <ActionButton label="Add project" icon="📁" onClick={createProject} />
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 900, letterSpacing: 1, color: "var(--muted)" }}>PROJECTS</div>
+        <div className="scroll" style={{ maxHeight: 180, overflow: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+          {projects.length ? projects.map((p) => (
+            <div key={p.id} style={{ border: "1px solid var(--border)", borderRadius: 16, padding: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 18 }}>📁</span>
+                <div style={{ flex: 1, fontWeight: 700 }}>{p.name}</div>
+                <button onClick={() => renameProject(p.id)} style={{ border: "none", background: "transparent", cursor: "pointer" }}>✏️</button>
+                <button onClick={() => deleteProject(p.id)} style={{ border: "none", background: "transparent", cursor: "pointer" }}>🗑️</button>
               </div>
             </div>
-          )) : <div className="emptySmall">No projects yet</div>}
+          )) : <div style={{ color: "var(--muted)", border: "1px dashed var(--border)", borderRadius: 16, padding: 14 }}>No projects yet</div>}
         </div>
-
-        <div className="sectionTitle">Chats</div>
-        <div className="listCol">
-          {sortedChats.map(c => (
-            <div key={c.id} className={`listCard ${c.id === activeChatId ? 'active' : ''}`} onClick={() => setActiveChatId(c.id)}>
-              <div className="listMain"><Icon><IconChat /></Icon><div><div>{c.title}</div><small>{c.mode || 'chat'}</small></div></div>
-              <div className="actionsMini">
-                <button onClick={e => { e.stopPropagation(); togglePinChat(c.id); }} title="Pin"><IconPin /></button>
-                <button onClick={e => { e.stopPropagation(); renameChat(c.id); }} title="Rename"><IconEdit /></button>
-                <button onClick={e => { e.stopPropagation(); deleteChat(c.id); }} title="Delete"><IconTrash /></button>
+        <div style={{ fontSize: 13, fontWeight: 900, letterSpacing: 1, color: "var(--muted)" }}>CHATS</div>
+        <div className="scroll" style={{ overflow: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+          {visibleChats.map((chat) => (
+            <div key={chat.id} onClick={() => setActiveChatId(chat.id)} style={{ border: `1px solid ${chat.id === activeChatId ? "var(--accent)" : "var(--border)"}`, background: chat.id === activeChatId ? "var(--accentSoft)" : "transparent", borderRadius: 18, padding: 12, cursor: "pointer", display: "flex", gap: 10, alignItems: "center" }}>
+              <span>💬</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{chat.title}</div>
+                <div style={{ color: "var(--muted)", fontSize: 13 }}>{chat.mode}</div>
               </div>
+              <button onClick={(e) => { e.stopPropagation(); renameChat(chat.id); }} style={{ border: "none", background: "transparent", cursor: "pointer" }}>✏️</button>
+              <button onClick={(e) => { e.stopPropagation(); togglePinChat(chat.id); }} style={{ border: "none", background: "transparent", cursor: "pointer" }}>{chat.pinned ? "📌" : "📍"}</button>
+              <button onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }} style={{ border: "none", background: "transparent", cursor: "pointer" }}>🗑️</button>
             </div>
           ))}
         </div>
       </aside>
 
-      <main className="main">
-        <div className="topbar">
-          <div>
-            <div className="chatTitle" dir="auto">{activeChat?.title || 'New chat'}</div>
-            <div className="chatSub">{activeChat?.mode || 'chat'}</div>
-          </div>
-          <div className="toolbar" ref={menuRef}>
-            <button className="pill" onClick={() => setMenu(menu === 'mode' ? null : 'mode')}><Icon><IconChat /></Icon>{activeChat?.mode || 'chat'}</button>
-            <button className="pill" onClick={() => setMenu(menu === 'theme' ? null : 'theme')}><Icon><IconTheme /></Icon>Backgrounds & colors</button>
-            <button className="pill" onClick={() => setPreviewOpen(v => !v)}>{previewOpen ? 'Hide preview' : 'Show preview'}</button>
-            {menu === 'mode' && <div className="menuPop"><MenuItem label="Chat" onClick={() => { updateChat(activeChat.id, c => ({ ...c, mode: 'chat' })); setMenu(null); }} /><MenuItem label="Build" onClick={() => { updateChat(activeChat.id, c => ({ ...c, mode: 'build' })); setMenu(null); }} /><MenuItem label="Code" onClick={() => { updateChat(activeChat.id, c => ({ ...c, mode: 'code' })); setMenu(null); }} /><MenuItem label="Study" onClick={() => { updateChat(activeChat.id, c => ({ ...c, mode: 'study' })); setMenu(null); }} /><MenuItem label="Image" onClick={() => { updateChat(activeChat.id, c => ({ ...c, mode: 'image' })); setMenu(null); }} /></div>}
-            {menu === 'theme' && <div className="menuPop"><MenuItem label="Light" onClick={() => { setTheme('light'); setMenu(null); }} /><MenuItem label="Dark" onClick={() => { setTheme('dark'); setMenu(null); }} /><MenuItem label={`Voice replies: ${voiceReply ? 'On' : 'Off'}`} onClick={() => setVoiceReply(v => !v)} /><MenuItem label={`Voice language: ${voiceLang}`} onClick={() => setVoiceLang(voiceLang === 'he-IL' ? 'en-US' : 'he-IL')} /></div>}
-          </div>
-        </div>
-
-        <div className="contentWrap">
-          <section className="chatPane">
-            <div className="messages" ref={messagesRef}>
-              {activeChat?.messages?.length ? activeChat.messages.map(m => (
-                <MessageBubble
-                  key={m.id}
-                  msg={m}
-                  onCopy={() => copy(m.text, m.id)}
-                  copied={copied === m.id}
-                  onEdit={m.role === 'user' ? () => setDraft(m.text) : undefined}
-                />
-              )) : <div className="emptyIntro"><div className="emptyOrb">✦</div><div><h2>Type or talk to start.</h2><p>I can chat, code, build games, explain topics, and work from screenshots.</p></div></div>}
+      <main style={{ flex: 1, minWidth: 0, display: "flex", gap: 16 }}>
+        <section style={{ flex: 1, minWidth: 0, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 28, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div style={{ padding: 18, borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 26, fontWeight: 900 }}>{activeChat?.title || "New chat"}</div>
+              <div style={{ color: "var(--muted)" }}>{activeChat?.mode || "chat"}</div>
             </div>
+            <div data-menu-root="true" style={{ display: "flex", gap: 10, flexWrap: "wrap", position: "relative" }}>
+              <ActionButton label={activeChat?.mode || "chat"} icon="💬" onClick={() => setModeMenuOpen((v) => !v)} active={modeMenuOpen} />
+              <ActionButton label="Backgrounds & colors" icon="🎨" onClick={() => setThemeMenuOpen((v) => !v)} active={themeMenuOpen} />
+              <ActionButton label={previewVisible ? "Hide preview" : "Show preview"} icon="👁️" onClick={() => setPreviewVisible((v) => !v)} />
+              {modeMenuOpen && (
+                <div style={{ position: "absolute", top: 58, right: 0, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 18, padding: 8, zIndex: 20, display: "flex", flexDirection: "column", gap: 6, minWidth: 180 }}>
+                  {['chat','build','study','code'].map((m) => <ActionButton key={m} small label={m} onClick={() => { patchActiveChat((c) => ({ ...c, mode: m })); setModeMenuOpen(false); }} active={activeChat?.mode===m} />)}
+                </div>
+              )}
+              {themeMenuOpen && (
+                <div style={{ position: "absolute", top: 58, left: 0, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 18, padding: 8, zIndex: 20, display: "flex", flexDirection: "column", gap: 6, minWidth: 220 }}>
+                  <ActionButton small label="Light" onClick={() => setTheme('light')} active={theme==='light'} />
+                  <ActionButton small label="Dark" onClick={() => setTheme('dark')} active={theme==='dark'} />
+                </div>
+              )}
+            </div>
+          </div>
 
-            <div className="composerShell" ref={composerRef}>
-              {refs.length > 0 && <div className="refsRow">{refs.map((r, i) => <div key={i} className="refChip">{r.name}</div>)}</div>}
-              <div className="composer">
-                <button className="roundBtn" onClick={() => setMenu(menu === 'plus' ? null : 'plus')}><IconPlus /></button>
-                {menu === 'plus' && <div className="menuPop plus"><MenuItem label="Add file" onClick={() => { fileInputRef.current?.click(); setMenu(null); }} /><MenuItem label="New chat" onClick={() => createChat(activeProject?.id || null)} /><MenuItem label="Add project" onClick={createProject} /></div>}
-                <textarea
-                  value={draft}
-                  onChange={e => setDraft(e.target.value)}
-                  placeholder="Message Playcraft..."
-                  rows={1}
-                  dir="auto"
-                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-                />
-                {loading ? (
-                  <button className="roundBtn accent" onClick={() => { abortRef.current?.abort(); setLoading(false); setStatus(''); }}>⏹</button>
-                ) : draft.trim() ? (
-                  <button className="roundBtn accent" onClick={() => sendMessage()}><IconSend /></button>
-                ) : (
-                  <button className={`roundBtn ${recording ? 'recording' : ''}`} onClick={startVoiceInput}><IconMic /></button>
+          <div ref={messagesRef} className="scroll" style={{ flex: 1, overflow: "auto", padding: 18, display: "flex", flexDirection: "column", gap: 18 }}>
+            {activeChat?.messages.map((m) => (
+              <div key={m.id} className="msg" style={{ display: "flex", flexDirection: "column", alignItems: m.role === 'user' ? 'flex-start' : 'flex-end', gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, maxWidth: "85%" }}>
+                  {m.role === 'assistant' ? <div style={{ width: 30, height: 30, borderRadius: 999, background: 'var(--accentSoft)', display: 'grid', placeItems: 'center' }}>✦</div> : null}
+                  <div dir={detectDir(m.text)} style={{ background: m.role === 'user' ? 'var(--bubbleUser)' : 'var(--bubbleAssistant)', border: '1px solid var(--border)', borderRadius: 22, padding: '14px 16px', lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>{m.text || '...'}</div>
+                  {m.role === 'user' ? <div style={{ width: 30, height: 30, borderRadius: 999, background: 'linear-gradient(135deg,var(--accent),var(--accent2))', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800 }}>U</div> : null}
+                </div>
+                {m.code && (
+                  <div style={{ maxWidth: '85%', alignSelf: m.role === 'assistant' ? 'flex-end' : 'flex-start', border: '1px solid var(--border)', borderRadius: 18, overflow: 'hidden', background: theme==='dark' ? '#0a1120' : '#f8fbff' }}>
+                    <div style={{ padding: 10, borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
+                      <strong>Code</strong>
+                      <button onClick={() => copyText(m.code)} style={{ border: '1px solid var(--border)', background: 'transparent', borderRadius: 12, padding: '6px 10px', cursor: 'pointer' }}>Copy</button>
+                    </div>
+                    <pre style={{ margin: 0, padding: 14, overflow: 'auto', direction: 'ltr', textAlign: 'left' }}>{m.code}</pre>
+                  </div>
                 )}
-                <input ref={fileInputRef} hidden multiple type="file" onChange={e => addFiles(e.target.files)} />
+                {m.file && (
+                  <div style={{ maxWidth: '85%', alignSelf: 'flex-end', border: '1px solid var(--border)', borderRadius: 18, padding: 12, background: 'var(--panel)' }}>
+                    <div style={{ fontWeight: 800 }}>{m.file.name}</div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                      {m.file.previewUrl && <ActionButton small label="Preview" onClick={() => { setPreviewVisible(true); setPreviewTab('preview'); setPreviewFile(m.file); }} />}
+                      {m.file.code && <ActionButton small label="Code" onClick={() => { setPreviewVisible(true); setPreviewTab('code'); setPreviewFile(m.file); }} />}
+                      {m.file.openUrl && <ActionButton small label="Open" onClick={() => window.open(m.file.openUrl, '_blank')} />}
+                      {m.file.downloadUrl && <ActionButton small label="Download" onClick={() => window.open(m.file.downloadUrl, '_blank')} />}
+                      {m.file.publishUrl && <ActionButton small label="Publish" onClick={() => window.open(m.file.publishUrl, '_blank')} />}
+                    </div>
+                  </div>
+                )}
+                <div className="msg-actions" style={{ display: 'flex', gap: 6, fontSize: 12 }}>
+                  <button onClick={() => copyText(m.text)} style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}>Copy</button>
+                  {m.role==='user' && <button onClick={() => { setDraft(m.text); setEditingMessageId(m.id); }} style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}>Edit</button>}
+                </div>
               </div>
-              {status ? <div className="status">{status}</div> : null}
-            </div>
-          </section>
+            ))}
+            {loading && <div style={{ color: 'var(--muted)', fontWeight: 700 }}>{status || 'Thinking...'}</div>}
+          </div>
 
-          {previewOpen && (
-            <aside className="previewPane">
-              <div className="previewTop">
-                <div className="previewTabs">
-                  <button className={`tab ${previewTab === 'preview' ? 'active' : ''}`} onClick={() => setPreviewTab('preview')}><IconEye /></button>
-                  <button className={`tab ${previewTab === 'code' ? 'active' : ''}`} onClick={() => setPreviewTab('code')}><IconCode /></button>
-                  <div className="previewName">{previewFile?.name || 'Preview'}</div>
+          <div style={{ borderTop: '1px solid var(--border)', padding: 14, display: 'flex', gap: 10, alignItems: 'flex-end' }} data-menu-root="true">
+            <div style={{ position: 'relative' }}>
+              <button onClick={() => setMenuOpen((m) => (m ? null : 'plus'))} style={{ width: 46, height: 46, borderRadius: 16, border: '1px solid var(--border)', background: 'var(--panel)', fontSize: 24, cursor: 'pointer', color: 'var(--text)' }}>+</button>
+              {menuOpen === 'plus' && (
+                <div style={{ position: 'absolute', bottom: 56, right: 0, background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 18, padding: 8, display: 'flex', flexDirection: 'column', gap: 6, minWidth: 180 }}>
+                  <ActionButton small label="Add file" onClick={() => { fileRef.current?.click(); setMenuOpen(null); }} />
+                  <ActionButton small label="New chat" onClick={() => { createChat(activeChat?.mode || 'chat', activeChat?.projectId || null); setMenuOpen(null); }} />
+                  <ActionButton small label="Add project" onClick={() => { createProject(); setMenuOpen(null); }} />
                 </div>
-                <div className="previewActions">
-                  {previewFile && <button className="smallBtn" onClick={() => copy(previewFile.content, 'file-code')}>{copied === 'file-code' ? 'Copied' : 'Copy'}</button>}
-                  {previewFile && <button className="smallBtn" onClick={() => downloadFile(previewFile)}><IconDownload /></button>}
-                  {previewFile && <button className="smallBtn" onClick={() => openFile(previewFile)}><IconOpen /></button>}
-                  {previewFile && <button className="smallBtn" onClick={() => publishFile(previewFile)}><IconPublish /></button>}
-                  <button className="smallBtn" onClick={() => setPreviewOpen(false)}><IconX /></button>
-                </div>
+              )}
+            </div>
+
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="Message Playcraft..."
+              rows={1}
+              style={{ flex: 1, resize: 'none', minHeight: 52, maxHeight: 180, overflow: 'auto', borderRadius: 18, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text)', padding: 14, fontSize: 18 }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  if (editingMessageId) {
+                    updateMessage(editingMessageId, { text: draft });
+                    setEditingMessageId(null);
+                    setDraft('');
+                  } else sendMessage(false);
+                }
+              }}
+            />
+
+            {!draft.trim() ? (
+              <button onClick={toggleVoiceOverlay} style={{ width: 54, height: 54, borderRadius: 18, border: '1px solid var(--border)', background: 'var(--accent)', color: '#fff', fontSize: 22, cursor: 'pointer' }}>◉</button>
+            ) : (
+              <button onClick={() => sendMessage(false)} style={{ width: 54, height: 54, borderRadius: 18, border: 'none', background: 'linear-gradient(135deg,var(--accent),var(--accent2))', color: '#fff', fontSize: 22, cursor: 'pointer' }}>➤</button>
+            )}
+
+            <input ref={fileRef} type="file" hidden multiple onChange={(e) => onFilePick(e.target.files)} />
+          </div>
+        </section>
+
+        {previewVisible && (
+          <aside style={{ width: 520, background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 28, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: 14, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <ActionButton small label="Preview" active={previewTab==='preview'} onClick={() => setPreviewTab('preview')} />
+                <ActionButton small label="Code" active={previewTab==='code'} onClick={() => setPreviewTab('code')} />
               </div>
-              <div className="previewBody">
-                {!previewFile ? <div className="previewEmpty">When an HTML game or page is created, it will appear here.</div> : previewTab === 'preview' && previewFile.mimeType === 'text/html' ? <iframe title="preview" src={previewFile.openUrl || `data:text/html;charset=utf-8,${encodeURIComponent(previewFile.content)}`} /> : <pre className="codeView" dir="ltr">{previewFile.content}</pre>}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {previewFile?.downloadUrl && <ActionButton small label="Download" onClick={() => window.open(previewFile.downloadUrl, '_blank')} />}
+                {previewFile?.openUrl && <ActionButton small label="Open" onClick={() => window.open(previewFile.openUrl, '_blank')} />}
+                {previewFile?.publishUrl && <ActionButton small label="Publish" onClick={() => window.open(previewFile.publishUrl, '_blank')} />}
+                <ActionButton small label="X" onClick={() => setPreviewVisible(false)} />
               </div>
-            </aside>
-          )}
-        </div>
+            </div>
+            <div style={{ flex: 1, background: t.previewBg }}>
+              {previewFile ? (
+                previewTab === 'preview' && previewFile.previewUrl ? (
+                  <iframe title="preview" src={previewFile.previewUrl} style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} />
+                ) : (
+                  <pre style={{ margin: 0, padding: 16, overflow: 'auto', height: '100%', direction: 'ltr', textAlign: 'left' }}>{previewFile.code || 'No code yet.'}</pre>
+                )
+              ) : (
+                <div style={{ height: '100%', display: 'grid', placeItems: 'center', color: 'var(--muted)', fontWeight: 700 }}>When an HTML game or page is created, it will appear here.</div>
+              )}
+            </div>
+          </aside>
+        )}
       </main>
 
-      {toast ? <div className="toast">{toast}</div> : null}
-
-      <style jsx global>{`
-        *{box-sizing:border-box} html,body{margin:0;padding:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--text)} body{height:100vh;overflow:hidden} button,input,textarea{font:inherit} input,textarea{outline:none}
-        .shell{--shadow:0 18px 40px rgba(30,41,59,.08);display:grid;grid-template-columns:320px 1fr;height:100vh;background:linear-gradient(180deg,var(--bg),color-mix(in srgb,var(--bg) 86%, white));padding:16px;gap:16px}
-        .sidebar,.main,.previewPane,.listCard,.bigBtn,.composer,.previewTop,.menuPop,.searchBox,.emptySmall,.composerShell,.message,.emptyIntro,.refChip{background:var(--panel);border:1px solid var(--border)}
-        .sidebar{border-radius:28px;padding:18px;display:flex;flex-direction:column;gap:14px;overflow:auto}.brand{display:flex;align-items:center;gap:12px}.brandDot{width:38px;height:38px;border-radius:14px;display:grid;place-items:center;background:linear-gradient(135deg,var(--accent),var(--accent2));color:white}.brandName{font-weight:900;font-size:28px}.brandSub{font-size:13px;opacity:.7}
-        .searchBox{display:flex;align-items:center;gap:10px;border-radius:18px;padding:12px 14px}.searchBox input{border:none;background:transparent;flex:1;color:var(--text)}.iconWrap{width:18px;height:18px;display:inline-grid;place-items:center}.iconWrap svg{width:100%;height:100%}
-        .sideActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}.bigBtn{display:flex;align-items:center;justify-content:center;gap:10px;border-radius:20px;padding:14px;border:none;color:var(--text);cursor:pointer;font-weight:800}.bigBtn:hover{transform:translateY(-1px)}
-        .sectionTitle{margin-top:6px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;opacity:.6;font-weight:800}.listCol{display:flex;flex-direction:column;gap:8px}.listCard{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-radius:18px;cursor:pointer}.listCard.active{outline:2px solid color-mix(in srgb,var(--accent) 65%, transparent)}.listMain{display:flex;gap:10px;align-items:center;min-width:0}.listMain small{display:block;opacity:.6}.actionsMini{display:flex;gap:6px;opacity:0;transition:.15s}.listCard:hover .actionsMini{opacity:1}.actionsMini button{width:30px;height:30px;border-radius:10px;border:none;background:var(--soft);color:var(--text);cursor:pointer}.actionsMini svg{width:16px;height:16px}.emptySmall{border-radius:18px;padding:16px;opacity:.65}
-        .main{display:flex;flex-direction:column;gap:14px}.topbar{display:flex;justify-content:space-between;align-items:center;padding:8px 8px 0 8px}.chatTitle{font-size:34px;font-weight:900;unicode-bidi:plaintext}.chatSub{opacity:.6}.toolbar{display:flex;align-items:center;gap:10px;position:relative}.pill{display:flex;align-items:center;gap:8px;border:none;background:var(--panel);border:1px solid var(--border);padding:12px 16px;border-radius:18px;color:var(--text);cursor:pointer}
-        .menuPop{position:absolute;top:56px;right:0;border-radius:18px;padding:8px;display:flex;flex-direction:column;gap:4px;min-width:230px;z-index:40;box-shadow:var(--shadow)}.menuPop.plus{bottom:74px;top:auto;left:0;right:auto}.menuItem{display:flex;align-items:center;justify-content:space-between;padding:11px 12px;border-radius:12px;cursor:pointer}.menuItem:hover{background:var(--soft)}
-        .contentWrap{display:grid;grid-template-columns:minmax(0,1fr) ${previewOpen ? '480px' : '0px'};gap:16px;min-height:0;flex:1}.chatPane{display:grid;grid-template-rows:minmax(0,1fr) auto;min-height:0;background:var(--panel);border:1px solid var(--border);border-radius:28px;overflow:hidden}.messages{padding:18px;overflow:auto;display:flex;flex-direction:column;gap:14px}.emptyIntro{display:flex;align-items:center;gap:18px;border-radius:24px;padding:18px 20px}.emptyOrb{width:52px;height:52px;border-radius:18px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;color:#fff;font-weight:900}
-        .composerShell{padding:12px;border-top:1px solid var(--border);position:relative}.composer{display:flex;align-items:flex-end;gap:10px;border-radius:24px;padding:10px;background:var(--soft);position:relative}.composer textarea{flex:1;resize:none;min-height:54px;max-height:160px;border:none;background:transparent;color:var(--text);padding:12px 4px}.roundBtn{width:44px;height:44px;border-radius:16px;border:none;background:var(--panel);color:var(--text);display:grid;place-items:center;cursor:pointer;flex:0 0 auto}.roundBtn svg{width:20px;height:20px}.roundBtn.accent{background:linear-gradient(135deg,var(--accent),var(--accent2));color:white}.roundBtn.recording{animation:pulse 1s infinite}.status{font-size:13px;opacity:.7;padding:6px 8px 0}.refsRow{display:flex;gap:8px;flex-wrap:wrap;padding-bottom:8px}.refChip{padding:8px 12px;border-radius:999px;font-size:13px;background:var(--soft)}
-        .messageRow{display:flex;align-items:flex-end;gap:10px}.messageRow.user{justify-content:flex-end}.avatar{width:38px;height:38px;border-radius:14px;display:grid;place-items:center;font-weight:900;background:linear-gradient(135deg,var(--accent),var(--accent2));color:white;flex:0 0 auto}.avatar.assistant{background:var(--soft);color:var(--accent)}.message{max-width:min(78ch,88%);padding:14px 16px;border-radius:22px;position:relative}.messageText{white-space:pre-wrap;line-height:1.6;unicode-bidi:plaintext}.messageText pre,.codeView{margin:0;white-space:pre-wrap;overflow:auto;padding:16px;border-radius:16px;background:#0f172a;color:#e5efff;border:1px solid rgba(148,163,184,.2)} .codeView{height:100%}
-        .hoverBar{display:flex;gap:6px;opacity:0;transition:.15s}.messageRow:hover .hoverBar{opacity:1}.tinyBtn{border:none;background:var(--soft);color:var(--text);padding:7px 9px;border-radius:10px;cursor:pointer;font-size:12px}.tinyBtn:hover{background:color-mix(in srgb,var(--soft) 70%, var(--accent) 15%)}
-        .previewPane{border-radius:28px;overflow:hidden;display:grid;grid-template-rows:auto 1fr}.previewTop{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-radius:28px 28px 0 0}.previewTabs{display:flex;align-items:center;gap:8px;min-width:0}.tab{width:40px;height:40px;border-radius:12px;border:none;background:var(--soft);display:grid;place-items:center;cursor:pointer;color:var(--text)}.tab.active{background:linear-gradient(135deg,var(--accent),var(--accent2));color:white}.previewName{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}.previewActions{display:flex;gap:8px}.smallBtn{border:none;background:var(--soft);color:var(--text);padding:10px 12px;border-radius:12px;cursor:pointer;display:grid;place-items:center}.smallBtn svg{width:18px;height:18px}.previewBody{min-height:0;background:var(--panel);border-top:1px solid var(--border)}.previewBody iframe{width:100%;height:100%;border:none;background:white}.previewEmpty{display:grid;place-items:center;height:100%;opacity:.6;padding:20px;text-align:center}
-        .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);padding:12px 16px;border-radius:14px;background:#0f172a;color:white;z-index:80;box-shadow:var(--shadow)}
-        @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(124,92,255,.35)}100%{box-shadow:0 0 0 12px rgba(124,92,255,0)}}
-        @media (max-width: 1200px){.contentWrap{grid-template-columns:1fr}.previewPane{order:-1;height:360px}}
-      `}</style>
-    </div>
-  );
-}
-
-function MenuItem({ label, onClick }) {
-  return <div className="menuItem" onClick={onClick}>{label}</div>;
-}
-
-function MessageBubble({ msg, onCopy, copied, onEdit }) {
-  const files = msg.files || [];
-  return (
-    <div className={`messageRow ${msg.role === 'user' ? 'user' : ''}`}>
-      {msg.role !== 'user' && <div className="avatar assistant">✦</div>}
-      <div>
-        <div className={`message ${msg.role === 'user' ? 'user' : 'assistant'}`}>
-          <div className="messageText" dir="auto">{msg.loading ? '…' : msg.text}</div>
-          {files.length > 0 && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>{files.map((f, i) => <div key={i} className="refChip">{f.name}</div>)}</div>}
+      {voiceOverlay && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'grid', placeItems: 'center', zIndex: 50 }}>
+          <div style={{ width: 420, maxWidth: '92vw', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 28, padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
+            <div style={{ fontSize: 24, fontWeight: 900 }}>Voice chat</div>
+            <div style={{ width: 160, height: 160, borderRadius: 999, background: 'linear-gradient(135deg,var(--accent),var(--accent2))', display: 'grid', placeItems: 'center', color: '#fff', fontSize: 34, animation: listening || speaking ? 'pulse 1.2s infinite' : 'none' }}>◉</div>
+            <div style={{ color: 'var(--muted)', textAlign: 'center' }}>{listening ? 'אני מקשיב...' : speaking ? 'אני מדבר...' : 'דבר איתי'}</div>
+            <div dir={detectDir(draft)} style={{ minHeight: 40 }}>{draft || '...'}</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <ActionButton label={listening ? 'Stop' : 'Listen'} onClick={() => listening ? stopListening() : startListening()} />
+              <ActionButton label="Send" onClick={onVoiceSend} />
+              <ActionButton label="Close" onClick={() => { stopListening(); setVoiceOverlay(false); }} />
+            </div>
+          </div>
         </div>
-        <div className="hoverBar" style={{ marginTop: 6 }}>
-          <button className="tinyBtn" onClick={onCopy}>{copied ? 'Copied' : 'Copy'}</button>
-          {onEdit ? <button className="tinyBtn" onClick={onEdit}>Edit</button> : <button className="tinyBtn">Like</button>}
-          {!onEdit ? <button className="tinyBtn">Dislike</button> : null}
-        </div>
-      </div>
-      {msg.role === 'user' && <div className="avatar">U</div>}
+      )}
+
+      {toast && <div style={{ position: 'fixed', bottom: 18, left: '50%', transform: 'translateX(-50%)', background: 'var(--text)', color: 'var(--panel)', padding: '10px 14px', borderRadius: 999 }}>{toast}</div>}
     </div>
   );
 }
