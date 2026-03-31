@@ -1057,6 +1057,8 @@ export default function Page() {
               )}
 
               <textarea
+
+
                 value={draft}
                 onChange={(e) => { setDraft(e.target.value); e.target.style.height = "56px"; e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`; }}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(false); } }}
